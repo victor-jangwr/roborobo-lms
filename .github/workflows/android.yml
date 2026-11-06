@@ -1,0 +1,39 @@
+name: 휴대폰 앱(APK) 빌드
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: APK 만들기
+        run: gradle -p android assembleDebug --no-daemon
+      - name: 파일 이름 정리
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk roborobo-lms-phone.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roborobo-lms-phone
+          path: roborobo-lms-phone.apk
+      - name: 다운로드 페이지(Release)에 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "phone-v${{ github.run_number }}" roborobo-lms-phone.apk \
+            --title "휴대폰 앱 v0.1.${{ github.run_number }}" \
+            --notes "학원 휴대폰에서 이 페이지를 열고 roborobo-lms-phone.apk 를 눌러 설치하세요." \
+            --latest

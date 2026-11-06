@@ -1,0 +1,69 @@
+/* 레이아웃: 왼쪽 고정 내비 + 오른쪽 작업 영역. 차분한 청회색 바탕 위에 코발트 하나만 강조. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 243 245 249;
+  --surface: 255 255 255;
+  --sunken: 236 240 246;
+  --line: 222 227 236;
+  --ink: 16 22 38;
+  --muted: 88 99 120;
+  --faint: 146 156 174;
+  --accent: 37 86 214;
+  --accent-ink: 255 255 255;
+  --accent-soft: 231 237 252;
+  --good: 22 155 104;
+  --warn: 226 125 18;
+  --late: 196 152 12;
+  --bad: 214 52 70;
+  --done: 150 160 178;
+  --shadow: 15 23 42;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: 12 16 24; --surface: 20 26 37; --sunken: 15 20 30; --line: 38 46 62;
+    --ink: 232 236 244; --muted: 156 166 186; --faint: 102 113 134;
+    --accent: 110 148 255; --accent-ink: 9 14 30; --accent-soft: 30 41 74;
+    --good: 56 200 140; --warn: 245 160 64; --late: 228 190 64; --bad: 244 100 112; --done: 102 113 134;
+    --shadow: 0 0 0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: 12 16 24; --surface: 20 26 37; --sunken: 15 20 30; --line: 38 46 62;
+  --ink: 232 236 244; --muted: 156 166 186; --faint: 102 113 134;
+  --accent: 110 148 255; --accent-ink: 9 14 30; --accent-soft: 30 41 74;
+  --good: 56 200 140; --warn: 245 160 64; --late: 228 190 64; --bad: 244 100 112; --done: 102 113 134;
+  --shadow: 0 0 0; color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 60; background: rgb(var(--surface));
+}
+h1, h2, h3 { text-wrap: balance; letter-spacing: -0.01em; }
+.num { font-variant-numeric: tabular-nums; }
+.gutter {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
+::selection { background: rgb(var(--accent) / 0.2); }
+
+/* 얇은 스크롤바 */
+.thin-scroll { scrollbar-width: thin; scrollbar-color: rgb(var(--line)) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
