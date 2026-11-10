@@ -1,14 +1,16 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CopyPlus, Download, Lock, Plus, Search, Trash2, UserPlus, X } from 'lucide-react'
+import { CopyPlus, Download, Lock, Pencil, Plus, Search, Trash2, UserPlus, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Route } from '../components/Shell'
 import { Avatar, Button, Card, Drawer, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, TeacherDot, ease } from '../components/ui'
 import { conflicts, slotText, weeklyMinutes } from '../lib/derive'
 import { saveFile, workbook } from '../lib/excel'
 import { useStore } from '../lib/store'
-import type { ClassSlot, Klass } from '../lib/types'
+import type { ClassSlot, Klass, Product } from '../lib/types'
+import { StudentPicker } from '../components/StudentPicker'
+import { BillingToggle } from './Billing'
 import { WEEKDAYS, WORK_DAYS, addDays, cls, fmtDate, fmtMonth, phoneFmt, termFor, termWeeks, toMin, won } from '../lib/util'
-import { discountsFor } from '../lib/seed'
+import { classItems, itemTotal } from '../lib/seed'
 
 const TERM_STATUS = { running: ['운영 중', 'good'], ready: ['준비 중', 'accent'], closed: ['종료 · 읽기 전용', 'neutral'] } as const
 
@@ -137,7 +139,8 @@ function ClassForm({ draft, termId, onClose }: { draft: Partial<Klass> | null; t
     let productId = v.productId
     if (newFee) productId = saveProduct({ kind: 'tuition', name: newFee.name || `${v.name} 월 수강료`, price: newFee.price })
     save({ ...v, productId } as Klass)
-    toast({ title: v.id ? '반 정보를 저장했어요' : `「${v.name}」 반을 만들었어요`, body: productId ? `학생을 배정하면 월 ${(newFee?.price ?? fee?.price ?? 0).toLocaleString()}원이 자동으로 청구돼요` : '수강료가 없어 자동 청구는 되지 않아요', tone: 'good' })
+    const matN = v.materialIds?.length ?? 0
+    toast({ title: v.id ? '반 정보를 저장했어요' : `「${v.name}」 반을 만들었어요`, body: productId ? `학생을 배정하면 월 ${(newFee?.price ?? fee?.price ?? 0).toLocaleString()}원${matN ? `과 교재·교구비 ${matN}개` : ''}가 자동으로 청구돼요` : '수강료가 없어 자동 청구는 되지 않아요', tone: 'good' })
     onClose()
   }
   const slots = v.slots ?? []
@@ -157,7 +160,7 @@ function ClassForm({ draft, termId, onClose }: { draft: Partial<Klass> | null; t
           <Field label="정원"><Input id="cf-cap" type="number" min={1} value={v.capacity ?? 8} onChange={e => setV({ ...v, capacity: Number(e.target.value) })} /></Field>
         </div>
         <div className="rounded-xl border border-accent/30 bg-accent-soft/40 p-4">
-          <p className="text-[13px] font-semibold">수강료 <span className="font-normal text-muted">학생을 이 반에 배정하면 이 금액으로 자동 청구돼요</span></p>
+          <p className="text-[13px] font-semibold">수강료 · 교재비 <span className="font-normal text-muted">학생을 이 반에 배정하면 이 금액으로 자동 청구돼요</span></p>
           <div className="mt-2.5">
             {newFee ? (
               <div className="grid grid-cols-[1fr_140px_auto] gap-2 items-center">
@@ -173,6 +176,15 @@ function ClassForm({ draft, termId, onClose }: { draft: Partial<Klass> | null; t
             )}
           </div>
           {v.id && members > 0 && (newFee || fee) && <p className="text-[12px] text-muted mt-2">이미 배정된 {members}명은 다음 달 「수강료 일괄 청구」부터 바뀐 금액이 적용돼요.</p>}
+          <MaterialPicker ids={v.materialIds ?? []} onChange={materialIds => setV({ ...v, materialIds })} />
+          {(() => {
+            const mats = (v.materialIds ?? []).map(id => db.products.find(p => p.id === id)).filter(Boolean) as Product[]
+            const tuition = newFee?.price ?? fee?.price ?? 0
+            const first = tuition + mats.reduce((a, m) => a + m.price, 0)
+            const monthly = tuition + mats.filter(m => m.billing === 'monthly').reduce((a, m) => a + m.price, 0)
+            if (!first) return null
+            return <p className="text-[12px] mt-3 pt-3 border-t border-accent/20 text-muted">배정할 때 첫 청구 <b className="text-ink num">{won(first)}</b>{mats.length > 0 && <> · 그다음 달부터 <b className="text-ink num">{won(monthly)}</b></>} <span className="text-faint">(할인 전)</span></p>
+          })()}
         </div>
         <div>
           <p className="text-[13px] font-medium mb-1.5">요일·시간</p>
@@ -200,38 +212,41 @@ function ClassForm({ draft, termId, onClose }: { draft: Partial<Klass> | null; t
 
 function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locked: boolean; onClose: () => void; onEdit: (k: Klass) => void }) {
   const db = useStore(s => s)
-  const enroll = useStore(s => s.enroll), unenroll = useStore(s => s.unenroll), del = useStore(s => s.deleteClass), toast = useStore(s => s.toast), openStudent = useStore(s => s.openStudent)
-  const [q, setQ] = useState(''), [confirmDel, setConfirmDel] = useState(false)
+  const enrollMany = useStore(s => s.enrollMany), unenroll = useStore(s => s.unenroll), del = useStore(s => s.deleteClass), toast = useStore(s => s.toast), openStudent = useStore(s => s.openStudent)
+  const [confirmDel, setConfirmDel] = useState(false), [picking, setPicking] = useState(false)
   const k = db.classes.find(c => c.id === id)
   const members = useMemo(() => k ? db.enrollments.filter(e => e.classId === k.id && !e.end).map(e => db.students.find(s => s.id === e.studentId)!).filter(Boolean) : [], [db, k])
   if (!k) return <Drawer open={false} onClose={onClose} title="">{null}</Drawer>
   const t = db.teachers.find(x => x.id === k.teacherId)
   const fee = db.products.find(p => p.id === k.productId)
-  const auto = db.settings.autoBillOnEnroll && !!fee
-  const preview = (sid: string) => { if (!fee) return null; const d = discountsFor(db, sid, fee.price); return { amount: fee.price - d.reduce((a, x) => a + x.amount, 0), d } }
-  const add = (sid: string, name: string) => {
-    const r = enroll(sid, k.id)
-    if (members.length + 1 > k.capacity) toast({ title: '정원을 넘었어요', body: `${k.name} ${members.length + 1}/${k.capacity}명`, tone: 'warn' })
-    if (r) toast({ title: `${name} 배정 · ${fmtMonth(r.month)} ${won(r.amount)} 청구`, body: r.discounts.length ? `수강료 ${won(r.price)}에서 ${r.discounts.map(x => x.label).join(', ')} 적용` : `${k.name} 수강료로 자동 청구했어요`, tone: 'good' })
-    else toast({ title: `${name} 학생을 배정했어요`, body: fee ? undefined : '이 반은 수강료가 없어 청구하지 않았어요' })
-  }
+  const auto = db.settings.autoBillOnEnroll && (!!fee || !!k.materialIds?.length)
+  const term = db.terms.find(x => x.id === k.termId)
+  const billMonth = (term && term.start > db.clock.date ? term.start : db.clock.date).slice(0, 7)
+  const preview = (sid: string) => { const its = classItems(db, sid, k, billMonth, 'enroll'); return { amount: its.reduce((a, it) => a + itemTotal(it), 0), d: its.flatMap(it => it.discounts) } }
   const remove = (sid: string, name: string) => {
     const r = unenroll(sid, k.id)
-    toast({ title: `${name} 학생을 뺐어요`, body: r.removed ? '아직 수납 전인 이번 달 수강료 청구도 함께 지웠어요' : r.kept ? '이미 수납한 청구가 있어 남겨 뒀어요. 환불은 결제 화면에서 처리하세요' : undefined, tone: r.kept ? 'warn' : 'info' })
+    toast({ title: `${name} 학생을 뺐어요`, body: r.removed ? '아직 수납 전인 이번 달 청구(수강료·교재비)도 함께 지웠어요' : r.kept ? '이미 수납한 청구가 있어 남겨 뒀어요. 환불은 결제 화면에서 처리하세요' : undefined, tone: r.kept ? 'warn' : 'info' })
   }
-  const cands = db.students.filter(s => s.status === 'active' && !members.includes(s) && (q ? s.name.includes(q) || s.school.includes(q) : true)).slice(0, 8)
+  const addMany = (ids: string[]) => {
+    const over = members.length + ids.length - k.capacity
+    const r = enrollMany(ids, k.id)
+    toast({ title: `${r.count}명을 「${k.name}」에 배정했어요`, body: auto && r.billed ? `${fmtMonth(billMonth)} 청구 합계 ${won(r.billed)} (할인 적용)` : fee ? '자동 청구가 꺼져 있어 청구하지 않았어요' : '이 반은 수강료가 없어 청구하지 않았어요', tone: 'good' })
+    if (over > 0) toast({ title: '정원을 넘었어요', body: `${k.name} ${members.length + ids.length}/${k.capacity}명`, tone: 'warn' })
+    setPicking(false)
+  }
   const otherClasses = (sid: string) => db.enrollments.filter(e => e.studentId === sid && !e.end && e.classId !== k.id).map(e => db.classes.find(c => c.id === e.classId)).filter(c => c && c.termId === k.termId) as Klass[]
   const clash = (sid: string) => otherClasses(sid).find(o => o.slots.some(a => k.slots.some(b => a.weekday === b.weekday && toMin(a.start) < toMin(b.end) && toMin(b.start) < toMin(a.end))))
   return (
     <Drawer open={!!id} onClose={() => { setConfirmDel(false); onClose() }}
       title={<div className="flex items-center gap-2.5"><span className="w-3 h-3 rounded-full" style={{ background: t?.color }} /><h2 className="text-[18px] font-semibold">{k.name}</h2></div>}
-      sub={<>{t?.name} 선생님 · {k.room} · {slotText(k)} · 주 {weeklyMinutes(k)}분 · <b className={fee ? 'text-ink' : 'text-warn'}>{fee ? `월 ${won(fee.price)}` : '수강료 미설정'}</b></>}
+      sub={<>{t?.name} 선생님 · {k.room} · {slotText(k)} · 주 {weeklyMinutes(k)}분 · <b className={fee ? 'text-ink' : 'text-warn'}>{fee ? `월 ${won(fee.price)}` : '수강료 미설정'}</b>{k.materialIds?.length ? ` · 교재 ${k.materialIds.map(id => db.products.find(p => p.id === id)?.name).filter(Boolean).join(', ')}` : ''}</>}
       footer={!locked && <>
         {confirmDel ? <><span className="text-[13px] text-bad mr-auto self-center">반과 배정 정보가 삭제돼요.</span><Button variant="ghost" onClick={() => setConfirmDel(false)}>취소</Button><Button variant="danger" onClick={() => { del(k.id); toast({ title: '반을 삭제했어요' }); onClose() }}>삭제</Button></>
           : <><Button variant="ghost" className="mr-auto text-bad" icon={<Trash2 size={15} />} onClick={() => setConfirmDel(true)}>반 삭제</Button><Button onClick={() => onEdit(k)}>반 정보 수정</Button></>}
       </>}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold">수강생 <span className="num text-muted">{members.length}/{k.capacity}</span> <span className="text-[12px] text-faint font-normal">이름을 누르면 학생 정보</span></h3>
+        {!locked && <Button size="sm" variant="primary" icon={<UserPlus size={14} />} onClick={() => setPicking(true)}>학생 배정</Button>}
       </div>
       <ul className="flex flex-col gap-1.5 mb-6">
         <AnimatePresence initial={false}>
@@ -245,27 +260,20 @@ function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locke
             </motion.li>
           ))}
         </AnimatePresence>
-        {members.length === 0 && <p className="text-[13px] text-muted">아직 배정된 학생이 없어요.</p>}
+        {members.length === 0 && <li className="text-[13px] text-muted py-6 text-center rounded-lg border border-dashed border-line">아직 배정된 학생이 없어요.{!locked && <> <button className="text-accent font-medium" onClick={() => setPicking(true)}>학생 배정</button>으로 여러 명을 한 번에 넣을 수 있어요.</>}</li>}
       </ul>
       {!locked && (
-        <div>
-          <h3 className="font-semibold mb-1 flex items-center gap-2"><UserPlus size={16} />학생 추가</h3>
-          <p className="text-[12px] text-muted mb-2">{auto ? `추가하면 ${fmtMonth(db.clock.date.slice(0, 7))} 수강료가 바로 청구돼요. 학생별 고정 할인은 자동 적용.` : fee ? '자동 청구가 꺼져 있어요 (결제 > 청구·수납에서 켜기)' : '이 반은 수강료가 없어 청구되지 않아요. 반 정보 수정에서 수강료를 정하세요.'}</p>
-          <div className="relative mb-2"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><Input id="cd-q" placeholder="이름, 학교로 검색" value={q} onChange={e => setQ(e.target.value)} className="pl-9" /></div>
-          <ul className="flex flex-col">
-            {cands.map(s => {
-              const c = clash(s.id)
-              return (
-                <li key={s.id} className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-sunken/60">
-                  <div className="flex-1 min-w-0"><p className="font-medium text-[14px]">{s.name} <span className="text-[12px] text-faint font-normal">{s.grade} · {s.school}</span></p>
-                    <p className="text-[12px] text-muted truncate">{c ? <span className="text-warn">같은 시간에 「{c.name}」 수강 중</span> : otherClasses(s.id).map(o => o.name).join(', ') || '수강 중인 반 없음'}</p></div>
-                  {auto && (() => { const pv = preview(s.id)!; return <span className="text-right shrink-0 leading-tight"><span className="block num text-[13px] font-semibold">{won(pv.amount)}</span>{pv.d.length > 0 && <span className="block text-[11px] text-accent">{pv.d.map(x => x.label).join(', ')}</span>}</span> })()}
-                  <Button size="sm" variant={members.length >= k.capacity ? 'outline' : 'soft'} onClick={() => add(s.id, s.name)}>추가</Button>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+        <StudentPicker open={picking} onClose={() => setPicking(false)} width={680}
+          title={`「${k.name}」에 학생 배정`}
+          sub={auto ? `고른 학생 모두 ${fmtMonth(billMonth)} 수강료${k.materialIds?.length ? '와 교재·교구비' : ''}가 바로 청구돼요. 학생별 할인은 자동 적용.` : '자동 청구가 꺼져 있거나 수강료가 없어 배정만 해요.'}
+          students={db.students.filter(s => s.status === 'active' && !members.includes(s))}
+          rowInfo={s => { const c = clash(s.id); return c ? `같은 시간에 「${c.name}」 수강 중` : otherClasses(s.id).map(o => o.name).join(', ') || '수강 중인 반 없음' }}
+          warn={s => !!clash(s.id)}
+          extraFilter={{ label: '수강 반 없음', test: s => otherClasses(s.id).length === 0 }}
+          rowRight={auto ? s => { const pv = preview(s.id); return <span className="text-right shrink-0 leading-tight"><span className="block num text-[13px] font-semibold">{won(pv.amount)}</span>{pv.d.length > 0 && <span className="block text-[11px] text-accent">{[...new Set(pv.d.map(x => x.label))].join(', ')}</span>}</span> } : undefined}
+          summary={ids => <>{auto && <>예상 청구 <b className="text-ink num">{won(ids.reduce((a, id) => a + preview(id).amount, 0))}</b> · </>}<span className={cls(members.length + ids.length > k.capacity && 'text-warn font-semibold')}>배정 후 {members.length + ids.length}/{k.capacity}명{members.length + ids.length > k.capacity ? ' · 정원 초과' : ''}</span></>}
+          confirmLabel={n => `${n}명 배정`}
+          onConfirm={addMany} />
       )}
     </Drawer>
   )
@@ -298,5 +306,57 @@ function NewTermModal({ open, onClose }: { open: boolean; onClose: () => void })
       {exists && <p className="mt-4 text-[13px] text-accent bg-accent-soft rounded-lg px-3 py-2">{nt.name}는 이미 만들어져 있어요.</p>}
       <p className="mt-4 text-[12px] text-faint">분기는 3·6·9·12월에 시작합니다. 방학·휴강 기간은 일정·보강 화면의 분기 설정에서 정할 수 있어요.</p>
     </Modal>
+  )
+}
+
+/** 반에 붙일 교재·교구 고르기 · 새로 만들기 · 금액 고치기 */
+function MaterialPicker({ ids, onChange }: { ids: string[]; onChange: (ids: string[]) => void }) {
+  const products = useStore(s => s.products)
+  const mats = products.filter(p => p.kind === 'material' && p.active)
+  const saveProduct = useStore(s => s.saveProduct), reprice = useStore(s => s.repriceProduct), toast = useStore(s => s.toast)
+  const [draft, setDraft] = useState<{ id?: string; name: string; price: number; billing: 'once' | 'monthly' } | null>(null)
+  const [orig, setOrig] = useState(0)
+  const commit = () => {
+    if (!draft?.name || !draft.price) return
+    const id = saveProduct({ id: draft.id, kind: 'material', name: draft.name, price: draft.price, billing: draft.billing })
+    if (draft.id && draft.price !== orig) { const n = reprice(id); toast({ title: '교재·교구 금액을 바꿨어요', body: n ? `수납 전 청구서 ${n}건에도 반영했어요. 이 교재를 쓰는 다른 반에도 같이 적용돼요.` : '다음 청구부터 적용되고, 이 교재를 쓰는 다른 반에도 같이 적용돼요.', tone: 'good' }) }
+    if (!draft.id) onChange([...ids, id])
+    setDraft(null)
+  }
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2"><p className="text-[13px] font-semibold flex-1">교재 · 교구비</p>
+        {!draft && <Button size="sm" variant="ghost" icon={<Plus size={14} />} onClick={() => { setDraft({ name: '', price: 20000, billing: 'once' }); setOrig(0) }}>새 교재·교구</Button>}</div>
+      <p className="text-[12px] text-muted">한 번 만들어 두면 다른 반에서도 골라 쓸 수 있어요. 금액을 고치면 이 교재를 쓰는 반 모두에 적용돼요.</p>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {mats.map(m => {
+          const on = ids.includes(m.id)
+          return (
+            <li key={m.id} className={cls('flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors', on ? 'border-accent/50 bg-surface' : 'border-transparent bg-surface/50')}>
+              <input id={`mat-${m.id}`} type="checkbox" checked={on} onChange={() => onChange(on ? ids.filter(x => x !== m.id) : [...ids, m.id])} />
+              <label htmlFor={`mat-${m.id}`} className="flex-1 min-w-0 cursor-pointer"><span className="text-[14px] font-medium">{m.name}</span> <span className="text-[12px] text-muted">· {(m.billing ?? 'once') === 'once' ? '배정할 때 1번' : '매달'}</span></label>
+              <span className="num text-[14px] font-semibold">{won(m.price)}</span>
+              <button type="button" aria-label={`${m.name} 수정`} onClick={() => { setDraft({ id: m.id, name: m.name, price: m.price, billing: m.billing ?? 'once' }); setOrig(m.price) }} className="p-1.5 text-faint hover:text-ink"><Pencil size={14} /></button>
+            </li>
+          )
+        })}
+        {!mats.length && !draft && <li className="text-[13px] text-muted">등록된 교재·교구가 없어요. 「새 교재·교구」로 만들어 보세요.</li>}
+      </ul>
+      <AnimatePresence initial={false}>
+        {draft && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <div className="mt-2 rounded-lg border border-accent/40 bg-surface p-3 grid gap-2.5">
+              <p className="text-[13px] font-semibold">{draft.id ? '교재·교구 수정' : '새 교재·교구'}</p>
+              <div className="grid grid-cols-[1fr_130px] gap-2">
+                <Input id="mat-name" autoFocus placeholder="예: 로봇 키트 교구비" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} aria-label="이름" />
+                <Input id="mat-price" type="number" step={1000} value={draft.price} onChange={e => setDraft({ ...draft, price: Number(e.target.value) })} className="num" aria-label="금액" />
+              </div>
+              <BillingToggle value={draft.billing} onChange={b => setDraft({ ...draft, billing: b })} />
+              <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setDraft(null)}>취소</Button><Button size="sm" variant="primary" disabled={!draft.name || !draft.price} onClick={commit}>{draft.id ? '저장' : '만들고 이 반에 넣기'}</Button></div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   )
 }

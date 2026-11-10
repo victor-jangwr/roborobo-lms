@@ -2,13 +2,13 @@
 // 실제 운영 버전에서는 같은 동작을 Supabase 호출로 바꿉니다 (src/lib/supabase 참고).
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { buildSeed, discountsFor, invoiceTotal, makeInvoices, specialInvoice, type DB } from './seed'
+import { buildSeed, classItems, invoiceTotal, itemTotal, makeInvoices, reapplyDiscounts, repriceUnpaid, specialInvoice, type DB } from './seed'
 import type {
   Attendance, Channel, ClassSlot, Consult, Klass, Member, Message, Makeup, PayMethod, Product, Session, Settings, Student, Teacher, Term,
 } from './types'
 import { addDays, hm, monthOf, termFor, toMin, uid, weekdayOf, ymd } from './util'
 import { cloud, isCloud, type Me } from './cloud'
-import type { SmsLog } from './types'
+import type { Invoice, SmsLog } from './types'
 
 const safeStorage = {
   getItem: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -28,7 +28,7 @@ export function demoClock(): { date: string; time: string; demo: boolean } {
   return { date: d, time: '17:20', demo: true }
 }
 
-export interface BillResult { month: string; price: number; amount: number; discounts: { label: string; amount: number }[] }
+export interface BillResult { month: string; price: number; amount: number; discounts: { label: string; amount: number }[]; lines: string[] }
 
 export interface Toast { id: string; title: string; body?: string; tone?: 'good' | 'warn' | 'bad' | 'info' }
 
@@ -60,6 +60,7 @@ interface State extends DB {
   saveClass: (k: Omit<Klass, 'id' | 'branchId' | 'termId'> & { id?: string }) => string
   deleteClass: (id: string) => void
   enroll: (studentId: string, classId: string) => BillResult | null
+  enrollMany: (studentIds: string[], classId: string) => { count: number; billed: number }
   unenroll: (studentId: string, classId: string) => { removed: boolean; kept: boolean }
   createNextTerm: () => string
 
@@ -78,7 +79,10 @@ interface State extends DB {
   sendTestSms: () => SmsLog
 
   saveProduct: (p: Partial<Product> & { name: string; price: number; kind: Product['kind'] }) => string
-  saveDiscountRule: (r: { id?: string; name: string; type: 'percent' | 'amount'; value: number }) => void
+  saveDiscountRule: (r: { id?: string; name: string; type: 'percent' | 'amount'; value: number; scope?: 'tuition' | 'all'; memo?: string }) => number
+  deleteDiscountRule: (id: string) => number
+  setRuleStudents: (ruleId: string, add: string[], remove: string[]) => number
+  repriceProduct: (productId: string) => number
   toggleStudentDiscount: (studentId: string, ruleId: string) => void
   generateInvoices: (month: string) => number
   billSpecial: (productId: string, studentIds: string[], extra?: { label: string; amount: number }) => number
@@ -115,7 +119,7 @@ function smsRecord(st: Settings, v: Omit<SmsLog, 'id' | 'ok'>): SmsLog {
 }
 
 export const useStore = create<State>()(persist((set, get) => ({
-  version: 9,
+  version: 10,
   session: null,
   toasts: [],
   viewStudentId: null,
@@ -154,21 +158,31 @@ export const useStore = create<State>()(persist((set, get) => ({
     const term = s.terms.find(t => t.id === k.termId)
     const start = term && term.start > s.clock.date ? term.start : s.clock.date
     const enrollments = [...s.enrollments, { id: uid('e'), studentId, classId, start }]
-    // 반에 저장된 수강료로 배정 월 청구를 자동 생성 (같은 달 청구서가 있으면 항목만 추가)
-    const p = s.products.find(x => x.id === k.productId)
+    // 반에 저장된 수강료·교재비로 배정 월 청구를 자동 생성 (같은 달 정규 청구서가 있으면 항목만 추가)
     const st = s.students.find(x => x.id === studentId)
-    if (!s.settings.autoBillOnEnroll || !p || st?.status !== 'active') { set({ enrollments }); return null }
+    if (!s.settings.autoBillOnEnroll || st?.status !== 'active') { set({ enrollments }); return null }
     const month = monthOf(start)
-    const label = `${k.name} · ${Number(month.slice(5))}월 수강료`
-    const discounts = discountsFor(s, studentId, p.price)
-    const item = { productId: p.id, label, price: p.price, discounts }
-    const inv = s.invoices.find(i => i.studentId === studentId && i.month === month && i.items.every(it => s.products.find(x => x.id === it.productId)?.kind === 'tuition'))
-    if (inv?.items.some(it => it.label === label)) { set({ enrollments }); return null }
+    const regular = (i: Invoice) => i.items.every(it => { const kd = s.products.find(x => x.id === it.productId)?.kind; return kd === 'tuition' || kd === 'material' })
+    const inv = s.invoices.find(i => i.studentId === studentId && i.month === month && regular(i) && !s.payments.some(p => p.invoiceId === i.id))
+    const items = classItems(s, studentId, k, month, 'enroll').filter(it => !s.invoices.some(i => i.studentId === studentId && i.month === month && i.items.some(x => x.label === it.label)))
+    if (!items.length) { set({ enrollments }); return null }
     const invoices = inv
-      ? s.invoices.map(i => i.id === inv.id ? { ...i, items: [...i.items, item] } : i)
-      : [...s.invoices, { id: uid('inv'), branchId: k.branchId, studentId, month, items: [item], dueDate: `${month}-10` < s.clock.date ? addDays(s.clock.date, 7) : `${month}-10`, createdAt: s.clock.date }]
+      ? s.invoices.map(i => i.id === inv.id ? { ...i, items: [...i.items, ...items] } : i)
+      : [...s.invoices, { id: uid('inv'), branchId: k.branchId, studentId, month, items, dueDate: `${month}-10` < s.clock.date ? addDays(s.clock.date, 7) : `${month}-10`, createdAt: s.clock.date }]
     set({ enrollments, invoices })
-    return { month, price: p.price, amount: Math.max(0, p.price - discounts.reduce((a, d) => a + d.amount, 0)), discounts }
+    const price = items.reduce((a, it) => a + it.price, 0)
+    const discounts = items.flatMap(it => it.discounts)
+    return { month, price, amount: items.reduce((a, it) => a + itemTotal(it), 0), discounts, lines: items.map(it => it.label.split(' · ')[1]) }
+  },
+  enrollMany: (studentIds, classId) => {
+    let billed = 0, count = 0
+    for (const sid of studentIds) {
+      const before = get().enrollments.length
+      const r = get().enroll(sid, classId)
+      if (get().enrollments.length > before) count++
+      if (r) billed += r.amount
+    }
+    return { count, billed }
   },
   unenroll: (studentId, classId) => {
     const s = get()
@@ -311,16 +325,49 @@ export const useStore = create<State>()(persist((set, get) => ({
     const s = get()
     if (p.id) { set({ products: s.products.map(x => x.id === p.id ? { ...x, ...p } : x) }); return p.id }
     const id = uid('p')
-    set({ products: [...s.products, { id, branchId: s.session?.branchId ?? 'br_main', active: true, ...p }] })
+    set({ products: [...s.products, { branchId: s.session?.branchId ?? 'br_main', active: true, ...p, id }] })
     return id
   },
-  saveDiscountRule: (r) => set(s => r.id
-    ? { discountRules: s.discountRules.map(x => x.id === r.id ? { ...x, ...r } : x) }
-    : { discountRules: [...s.discountRules, { id: uid('d'), branchId: s.session?.branchId ?? 'br_main', ...r }] }),
-  toggleStudentDiscount: (studentId, ruleId) => set(s => {
+  saveDiscountRule: (r) => {
+    const s = get()
+    const id = r.id ?? uid('d')
+    const discountRules = r.id ? s.discountRules.map(x => x.id === r.id ? { ...x, ...r } : x) : [...s.discountRules, { branchId: s.session?.branchId ?? 'br_main', ...r, id }]
+    const who = new Set(s.studentDiscounts.filter(d => d.ruleId === id).map(d => d.studentId))
+    const { invoices, changed } = reapplyDiscounts({ ...s, discountRules }, monthOf(s.clock.date), who)
+    set({ discountRules, invoices })
+    return changed
+  },
+  deleteDiscountRule: (id) => {
+    const s = get()
+    const who = new Set(s.studentDiscounts.filter(d => d.ruleId === id).map(d => d.studentId))
+    const discountRules = s.discountRules.filter(x => x.id !== id)
+    const studentDiscounts = s.studentDiscounts.filter(d => d.ruleId !== id)
+    const { invoices, changed } = reapplyDiscounts({ ...s, discountRules, studentDiscounts }, monthOf(s.clock.date), who)
+    set({ discountRules, studentDiscounts, invoices })
+    return changed
+  },
+  setRuleStudents: (ruleId, add, remove) => {
+    const s = get()
+    const rm = new Set(remove)
+    const has = new Set(s.studentDiscounts.filter(d => d.ruleId === ruleId).map(d => d.studentId))
+    const studentDiscounts = [...s.studentDiscounts.filter(d => !(d.ruleId === ruleId && rm.has(d.studentId))), ...add.filter(x => !has.has(x)).map(studentId => ({ id: uid('sd'), studentId, ruleId }))]
+    const { invoices, changed } = reapplyDiscounts({ ...s, studentDiscounts }, monthOf(s.clock.date), new Set([...add, ...remove]))
+    set({ studentDiscounts, invoices })
+    return changed
+  },
+  toggleStudentDiscount: (studentId, ruleId) => {
+    const s = get()
     const ex = s.studentDiscounts.find(d => d.studentId === studentId && d.ruleId === ruleId)
-    return { studentDiscounts: ex ? s.studentDiscounts.filter(d => d !== ex) : [...s.studentDiscounts, { id: uid('sd'), studentId, ruleId }] }
-  }),
+    const studentDiscounts = ex ? s.studentDiscounts.filter(d => d !== ex) : [...s.studentDiscounts, { id: uid('sd'), studentId, ruleId }]
+    const { invoices } = reapplyDiscounts({ ...s, studentDiscounts }, monthOf(s.clock.date), new Set([studentId]))
+    set({ studentDiscounts, invoices })
+  },
+  repriceProduct: (productId) => {
+    const s = get()
+    const { invoices, changed } = repriceUnpaid(s, productId, monthOf(s.clock.date))
+    set({ invoices })
+    return changed
+  },
   generateInvoices: (month) => {
     const s = get()
     const invs = makeInvoices(s, month, s.clock.date)
@@ -378,7 +425,7 @@ export const useStore = create<State>()(persist((set, get) => ({
   },
 }), {
   name: isCloud ? 'roborobo-lms-server-ui' : 'roborobo-lms-preview',
-  version: 9,
+  version: 10,
   storage: createJSONStorage(() => safeStorage),
   partialize: (s) => { if (isCloud) return {} as State; const { toasts, viewStudentId, ...rest } = s; void toasts; void viewStudentId; return rest as unknown as State },
   // 예전 미리보기 데이터에 없는 항목(상담 등)은 새 예시 데이터로 채움

@@ -26,6 +26,7 @@ export interface Klass {
   name: string; teacherId: ID; room: string; capacity: number
   slots: ClassSlot[]
   productId?: ID     // 연결된 수강료 상품
+  materialIds?: ID[] // 교재·교구 상품 (배정할 때 함께 청구)
   color?: string
 }
 
@@ -76,17 +77,20 @@ export interface Product {
   period?: string     // 특강 기간 표시용
   capacity?: number
   active: boolean
+  billing?: 'once' | 'monthly'   // 교재·교구: 배정할 때 1번(분기당) / 매달 수강료와 함께
 }
 
 export interface DiscountRule {
   id: ID; branchId: ID; name: string
   type: 'percent' | 'amount'; value: number
+  scope?: 'tuition' | 'all'      // 수강료에만 / 교재·교구비에도
+  memo?: string
 }
 export interface StudentDiscount { id: ID; studentId: ID; ruleId: ID }
 
 export interface InvoiceItem {
   productId: ID; label: string; price: number
-  discounts: { label: string; amount: number }[]
+  discounts: { label: string; amount: number; ruleId?: ID }[]
 }
 export interface Invoice {
   id: ID; branchId: ID; studentId: ID

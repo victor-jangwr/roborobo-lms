@@ -1,6 +1,6 @@
 // 미리보기용 예시 데이터. 실제 운영에서는 Supabase 데이터로 대체됩니다.
 import type {
-  Attendance, Branch, DiscountRule, Enrollment, Invoice, Klass, Makeup, Payment, Product,
+  Attendance, Branch, DiscountRule, Enrollment, Invoice, InvoiceItem, Klass, Makeup, Payment, Product,
   Settings, SmsLog, Student, StudentDiscount, Teacher, Term, Consult, Channel, Message,
 } from './types'
 import { addDays, fromMin, monthOf, termFor, toMin, weekdayOf, ymd } from './util'
@@ -65,11 +65,14 @@ export function buildSeed(today: string, nowHM: string): DB {
     { id: 'p_cos', branchId: B, kind: 'tuition', name: 'COS Pro 대비반 월 수강료', price: 200000, active: true },
     { id: 'p_winter', branchId: B, kind: 'special', name: '겨울방학 로봇 집중 특강', price: 150000, period: '12/22 ~ 12/31 (8회)', capacity: 12, active: true },
     { id: 'p_cosx', branchId: B, kind: 'special', name: 'COS Pro 시험 직전 특강', price: 90000, period: '11/16 ~ 11/27 (4회)', capacity: 10, active: true },
-    { id: 'p_kit', branchId: B, kind: 'material', name: '로봇 키트 교재비', price: 45000, active: true },
+    { id: 'p_kit', branchId: B, kind: 'material', name: '로봇 키트 교구비', price: 45000, active: true, billing: 'once' },
+    { id: 'p_book_py', branchId: B, kind: 'material', name: '파이썬 교재', price: 18000, active: true, billing: 'once' },
+    { id: 'p_book_scr', branchId: B, kind: 'material', name: '스크래치 활동지', price: 5000, active: true, billing: 'monthly' },
   ]
 
   const C = (id: string, name: string, teacherId: string, room: string, productId: string, slots: [number, string, string][], capacity = 8): Klass =>
-    ({ id, branchId: B, termId: 'term_cur', name, teacherId, room, capacity, productId, slots: slots.map(([weekday, start, end]) => ({ weekday, start, end })) })
+    ({ id, branchId: B, termId: 'term_cur', name, teacherId, room, capacity, productId, slots: slots.map(([weekday, start, end]) => ({ weekday, start, end })),
+      materialIds: productId === 'p_robot' ? ['p_kit'] : productId === 'p_python' ? ['p_book_py'] : productId === 'p_scratch' ? ['p_book_scr'] : undefined })
 
   const classes: Klass[] = [
     C('c1', '스크래치 기초 A', 't1', '1강의실', 'p_scratch', [[1, '15:00', '16:20'], [3, '15:00', '16:20']]),
@@ -261,13 +264,76 @@ export function buildSeed(today: string, nowHM: string): DB {
 
 const uidish = (n: number) => `pay${n + 1}`
 
-export function discountsFor(db: Pick<DB, 'studentDiscounts' | 'discountRules'>, studentId: string, price: number) {
+export function discountsFor(db: Pick<DB, 'studentDiscounts' | 'discountRules'>, studentId: string, price: number, kind: 'tuition' | 'material' = 'tuition') {
   return db.studentDiscounts.filter(d => d.studentId === studentId).map(d => {
     const rule = db.discountRules.find(x => x.id === d.ruleId)
     if (!rule) return null
+    if (kind === 'material' && rule.scope !== 'all') return null
     const amount = rule.type === 'percent' ? Math.round((price * rule.value) / 100 / 100) * 100 : rule.value
-    return { label: rule.name, amount: Math.min(amount, price) }
-  }).filter(Boolean) as { label: string; amount: number }[]
+    return { label: rule.name, amount: Math.min(amount, price), ruleId: rule.id }
+  }).filter(Boolean) as { label: string; amount: number; ruleId: string }[]
+}
+
+/** 반 배정·월 청구에 들어갈 항목: 수강료 + 교재·교구비
+ *  once 교재는 같은 분기에 이미 청구했으면 빼고, monthly 교재는 매달 넣음 */
+export function classItems(db: DB, studentId: string, k: Klass, month: string, mode: 'enroll' | 'monthly'): InvoiceItem[] {
+  const m = Number(month.slice(5))
+  const items: InvoiceItem[] = []
+  const p = db.products.find(x => x.id === k.productId)
+  if (p) items.push({ productId: p.id, label: `${k.name} · ${m}월 수강료`, price: p.price, discounts: discountsFor(db, studentId, p.price) })
+  const term = db.terms.find(t => t.id === k.termId)
+  for (const mid of k.materialIds ?? []) {
+    const mp = db.products.find(x => x.id === mid && x.kind === 'material')
+    if (!mp) continue
+    const once = (mp.billing ?? 'once') === 'once'
+    if (once) {
+      if (mode === 'monthly') continue
+      const label = `${k.name} · ${mp.name}`
+      const already = db.invoices.some(i => i.studentId === studentId && (!term || (i.month >= term.start.slice(0, 7) && i.month <= term.end.slice(0, 7))) && i.items.some(it => it.productId === mp.id && it.label === label))
+      if (already) continue
+      items.push({ productId: mp.id, label, price: mp.price, discounts: discountsFor(db, studentId, mp.price, 'material') })
+    } else {
+      items.push({ productId: mp.id, label: `${k.name} · ${m}월 ${mp.name}`, price: mp.price, discounts: discountsFor(db, studentId, mp.price, 'material') })
+    }
+  }
+  return items
+}
+
+const isRegular = (db: Pick<DB, 'products'>, it: InvoiceItem) => { const k = db.products.find(x => x.id === it.productId)?.kind; return k === 'tuition' || k === 'material' }
+const paidAny = (db: Pick<DB, 'payments'>, invId: string) => db.payments.some(p => p.invoiceId === invId)
+
+/** 수납 전(돈을 하나도 안 받은) 이번 달 이후 청구서의 할인을 지금 규칙으로 다시 계산 */
+export function reapplyDiscounts(db: DB, fromMonth: string, studentIds?: Set<string>) {
+  let changed = 0
+  const invoices = db.invoices.map(inv => {
+    if (inv.month < fromMonth || paidAny(db, inv.id) || (studentIds && !studentIds.has(inv.studentId))) return inv
+    let touched = false
+    const items = inv.items.map(it => {
+      if (!isRegular(db, it)) return it
+      const kind = db.products.find(x => x.id === it.productId)?.kind === 'material' ? 'material' : 'tuition'
+      const d = discountsFor(db, inv.studentId, it.price, kind)
+      if (JSON.stringify(d.map(x => [x.label, x.amount])) === JSON.stringify(it.discounts.map(x => [x.label, x.amount]))) return it
+      touched = true
+      return { ...it, discounts: d }
+    })
+    if (touched) changed++
+    return touched ? { ...inv, items } : inv
+  })
+  return { invoices, changed }
+}
+
+/** 상품 가격이 바뀌었을 때 수납 전 청구서에 새 가격 반영 */
+export function repriceUnpaid(db: DB, productId: string, fromMonth: string) {
+  const p = db.products.find(x => x.id === productId)
+  if (!p) return { invoices: db.invoices, changed: 0 }
+  let changed = 0
+  const invoices = db.invoices.map(inv => {
+    if (inv.month < fromMonth || paidAny(db, inv.id) || !inv.items.some(it => it.productId === productId && it.price !== p.price)) return inv
+    changed++
+    const kind = p.kind === 'material' ? 'material' : 'tuition'
+    return { ...inv, items: inv.items.map(it => it.productId !== productId ? it : { ...it, price: p.price, discounts: p.kind === 'special' ? it.discounts : discountsFor(db, inv.studentId, p.price, kind) }) }
+  })
+  return { invoices, changed }
 }
 
 export const itemTotal = (it: { price: number; discounts: { amount: number }[] }) => Math.max(0, it.price - it.discounts.reduce((a, d) => a + d.amount, 0))
@@ -281,16 +347,15 @@ export function makeInvoices(db: DB, month: string, today: string): Invoice[] {
   for (const e of db.enrollments) {
     if (e.end && e.end.slice(0, 7) < month) continue
     const k = db.classes.find(c => c.id === e.classId)
-    if (!k || !termIds.includes(k.termId) || !k.productId) continue
+    if (!k || !termIds.includes(k.termId) || (!k.productId && !k.materialIds?.length)) continue
     const s = db.students.find(x => x.id === e.studentId)
     if (!s || s.status !== 'active') continue
-    const p = db.products.find(x => x.id === k.productId)
-    if (!p) continue
-    const exists = db.invoices.some(i => i.studentId === s.id && i.month === month && i.items.some(it => it.productId === p.id && it.label.includes(k.name)))
-    if (exists) continue
     const items = byStudent.get(s.id) ?? []
-    items.push({ productId: p.id, label: `${k.name} · ${Number(month.slice(5))}월 수강료`, price: p.price, discounts: discountsFor(db, s.id, p.price) })
-    byStudent.set(s.id, items)
+    for (const it of classItems(db, s.id, k, month, 'monthly')) {
+      const exists = db.invoices.some(i => i.studentId === s.id && i.month === month && i.items.some(x => x.productId === it.productId && x.label === it.label))
+      if (!exists) items.push(it)
+    }
+    if (items.length) byStudent.set(s.id, items)
   }
   for (const [studentId, items] of byStudent) {
     out.push({ id: `inv_${month}_${studentId}_${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items, dueDate: `${month}-10`, createdAt: today })
@@ -300,7 +365,7 @@ export function makeInvoices(db: DB, month: string, today: string): Invoice[] {
 
 export function specialInvoice(db: DB, productId: string, studentId: string, month: string, today: string, extra?: { label: string; amount: number }): Invoice {
   const p = db.products.find(x => x.id === productId)!
-  const discounts = p.kind === 'special' ? [] : discountsFor(db, studentId, p.price)
+  const discounts: InvoiceItem['discounts'] = p.kind === 'special' ? [] : discountsFor(db, studentId, p.price, p.kind === 'material' ? 'material' : 'tuition')
   if (extra && extra.amount > 0) discounts.push(extra)
   return { id: `inv_${productId}_${studentId}_${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items: [{ productId, label: p.name, price: p.price, discounts }], dueDate: addDays(today, 7), createdAt: today }
 }

@@ -5,7 +5,7 @@ export interface CloudCfg { url: string; key: string }
 const CFG_KEY = 'roborobo-lms-server'
 
 function readCfg(): CloudCfg | null {
-  const env = import.meta.env as Record<string, string | undefined>
+  const env = (import.meta.env ?? {}) as Record<string, string | undefined>
   if (env.VITE_SUPABASE_URL && env.VITE_SUPABASE_KEY) return { url: env.VITE_SUPABASE_URL, key: env.VITE_SUPABASE_KEY }
   try {
     const v = JSON.parse(localStorage.getItem(CFG_KEY) ?? 'null') as CloudCfg | null
