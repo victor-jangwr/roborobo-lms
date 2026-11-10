@@ -7,7 +7,7 @@ import { useStore } from '../lib/store'
 import type { Teacher } from '../lib/types'
 import { TEACHER_COLORS, cls, phoneFmt } from '../lib/util'
 import { isCloud } from '../lib/cloud'
-import { Accounts, SmsServer } from './ConfigCloud'
+import { Accounts, OrgSetup, SmsServer } from './ConfigCloud'
 
 export default function Config(_: { go: (r: Route) => void }) {
   const [tab, setTab] = useState<'teachers' | 'attendance' | 'branch' | 'demo' | 'accounts' | 'phone'>('teachers')
@@ -96,6 +96,7 @@ function Attendance() {
 
 function Branch() {
   const db = useStore(s => s)
+  if (isCloud) return <OrgSetup go={() => { location.hash = 'franchise' }} />
   return (
     <div className="grid gap-4">
       <Card>
@@ -110,7 +111,7 @@ function Branch() {
           ))}
           <li className="flex items-center gap-3 px-2 py-3 opacity-60">
             <span className="grid place-items-center w-10 h-10 rounded-lg border border-dashed border-line"><Plus size={16} /></span>
-            <div><p className="font-medium">가맹점 추가</p><p className="text-[12px] text-muted">실제 운영 버전에서 본사 계정으로 지점을 만들고 원장을 초대합니다.</p></div>
+            <div><p className="font-medium">가맹점 추가</p><p className="text-[12px] text-muted">본사 계정의 '가맹 본사' 메뉴에서 지점을 만들고 점주를 초대해요.</p></div>
           </li>
         </ul>
       </Card>

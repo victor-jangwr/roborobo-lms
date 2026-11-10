@@ -203,3 +203,164 @@ do $$ begin
   begin alter publication supabase_realtime add table lms_records; exception when duplicate_object then null; end;
   begin alter publication supabase_realtime add table lms_sms_outbox; exception when duplicate_object then null; end;
 end $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- 가맹 본사 (2026-11 추가) — 이 아래만 다시 실행해도 됩니다.
+-- 본사(org) 아래에 지점(직영·가맹)이 있고, 지점마다 로열티 계약과 월 정산서가 있습니다.
+-- ════════════════════════════════════════════════════════════════
+create table if not exists lms_orgs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+alter table lms_branches add column if not exists org_id uuid references lms_orgs(id) on delete set null;
+alter table lms_branches add column if not exists kind text not null default 'franchise';
+alter table lms_branches add column if not exists owner_code text unique;   -- 점주 가입용 초대 코드
+alter table lms_branches add column if not exists region text;
+
+create table if not exists lms_hq_members (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  org_id uuid not null references lms_orgs(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, org_id)
+);
+
+create table if not exists lms_contracts (
+  branch_id uuid primary key references lms_branches(id) on delete cascade,
+  org_id uuid not null references lms_orgs(id) on delete cascade,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists lms_settlements (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references lms_orgs(id) on delete cascade,
+  branch_id uuid not null references lms_branches(id) on delete cascade,
+  month text not null,                 -- YYYY-MM
+  amount bigint not null,              -- 합계 (부가세 포함)
+  data jsonb not null,                 -- 계산 내역
+  status text not null default 'issued' check (status in ('issued', 'confirmed', 'paid', 'void')),
+  issued_at timestamptz not null default now(),
+  confirmed_at timestamptz,
+  paid_at timestamptz,
+  paid_note text,
+  unique (branch_id, month)
+);
+
+create table if not exists lms_charges (   -- 그 달만 붙는 청구 (교재·키트 주문 등)
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references lms_orgs(id) on delete cascade,
+  branch_id uuid not null references lms_branches(id) on delete cascade,
+  month text not null,
+  name text not null,
+  amount bigint not null,
+  created_at timestamptz not null default now()
+);
+
+create or replace function lms_my_orgs() returns setof uuid language sql stable security definer set search_path = public as
+$$ select org_id from lms_hq_members where user_id = auth.uid() $$;
+create or replace function lms_is_hq_of(b uuid) returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from lms_branches br join lms_hq_members h on h.org_id = br.org_id where br.id = b and h.user_id = auth.uid()) $$;
+
+alter table lms_orgs enable row level security;
+alter table lms_hq_members enable row level security;
+alter table lms_contracts enable row level security;
+alter table lms_settlements enable row level security;
+alter table lms_charges enable row level security;
+
+drop policy if exists og_sel on lms_orgs;
+create policy og_sel on lms_orgs for select using (id in (select lms_my_orgs()) or id = (select org_id from lms_branches where id = lms_my_branch()));
+drop policy if exists hm_sel on lms_hq_members;
+create policy hm_sel on lms_hq_members for select using (org_id in (select lms_my_orgs()));
+
+-- 본사는 소속 지점을 보고 이름·종류·지역을 바꿀 수 있음
+drop policy if exists br_hq_sel on lms_branches;
+create policy br_hq_sel on lms_branches for select using (org_id in (select lms_my_orgs()));
+drop policy if exists br_hq_upd on lms_branches;
+create policy br_hq_upd on lms_branches for update using (org_id in (select lms_my_orgs())) with check (org_id in (select lms_my_orgs()));
+drop policy if exists mb_hq_sel on lms_members;
+create policy mb_hq_sel on lms_members for select using (lms_is_hq_of(branch_id));
+
+-- 본사가 읽을 수 있는 지점 데이터: 학생 명단·반·수강·출결·청구·수납 (상담·메신저·문자는 지점만)
+drop policy if exists rc_hq_sel on lms_records;
+create policy rc_hq_sel on lms_records for select using (
+  lms_is_hq_of(branch_id) and kind in ('students', 'enrollments', 'classes', 'teachers', 'terms', 'attendances', 'invoices', 'payments', 'products', 'settings'));
+
+drop policy if exists ct_hq on lms_contracts;
+create policy ct_hq on lms_contracts for all using (org_id in (select lms_my_orgs())) with check (org_id in (select lms_my_orgs()) and lms_is_hq_of(branch_id));
+drop policy if exists ct_br on lms_contracts;
+create policy ct_br on lms_contracts for select using (branch_id = lms_my_branch() and lms_my_role() = 'owner');
+
+drop policy if exists st_hq on lms_settlements;
+create policy st_hq on lms_settlements for all using (org_id in (select lms_my_orgs())) with check (org_id in (select lms_my_orgs()) and lms_is_hq_of(branch_id));
+drop policy if exists st_br on lms_settlements;
+create policy st_br on lms_settlements for select using (branch_id = lms_my_branch() and lms_my_role() = 'owner' and status <> 'void');
+
+drop policy if exists cg_hq on lms_charges;
+create policy cg_hq on lms_charges for all using (org_id in (select lms_my_orgs())) with check (org_id in (select lms_my_orgs()) and lms_is_hq_of(branch_id));
+drop policy if exists cg_br on lms_charges;
+create policy cg_br on lms_charges for select using (branch_id = lms_my_branch() and lms_my_role() = 'owner');
+
+-- 내 계정 정보 (본사 정보 포함)
+create or replace function lms_me() returns json language sql stable security definer set search_path = public as $$
+  select json_build_object('branch_id', m.branch_id, 'role', m.role, 'teacher_id', m.teacher_id,
+                           'branch_name', b.name, 'join_code', case when m.role = 'owner' then b.join_code end,
+                           'branch_kind', b.kind, 'org_id', b.org_id, 'org_name', o.name,
+                           'hq_org_id', (select h.org_id from lms_hq_members h where h.user_id = auth.uid() limit 1))
+    from lms_members m join lms_branches b on b.id = m.branch_id left join lms_orgs o on o.id = b.org_id
+   where m.user_id = auth.uid()
+$$;
+
+-- 본사 만들기: 지금 원장인 지점이 직영점이 되고, 이 계정이 본사 관리자가 됨
+create or replace function lms_create_org(p_name text) returns json language plpgsql security definer set search_path = public as $$
+declare bid uuid := lms_my_branch(); oid uuid;
+begin
+  if bid is null or lms_my_role() <> 'owner' then raise exception '원장 계정으로 로그인해 주세요'; end if;
+  if (select org_id from lms_branches where id = bid) is not null then raise exception '이미 본사에 속한 지점이에요'; end if;
+  insert into lms_orgs (name) values (p_name) returning id into oid;
+  update lms_branches set org_id = oid, kind = 'direct' where id = bid;
+  insert into lms_hq_members (user_id, org_id) values (auth.uid(), oid);
+  return lms_me();
+end $$;
+
+-- 본사: 새 가맹 지점 만들기 → 점주 초대 코드 발급, 기본 계약 생성
+create or replace function lms_hq_create_branch(p_name text, p_region text, p_contract jsonb) returns json language plpgsql security definer set search_path = public as $$
+declare oid uuid; b lms_branches;
+begin
+  select org_id into oid from lms_hq_members where user_id = auth.uid() limit 1;
+  if oid is null then raise exception '본사 관리자만 지점을 만들 수 있어요'; end if;
+  insert into lms_branches (name, org_id, kind, region, owner_code)
+  values (p_name, oid, 'franchise', p_region, upper(substr(md5(random()::text), 1, 8))) returning * into b;
+  insert into lms_contracts (branch_id, org_id, data) values (b.id, oid, p_contract);
+  return json_build_object('id', b.id, 'name', b.name, 'owner_code', b.owner_code);
+end $$;
+
+-- 학원 코드로 참여: 선생님·출결 태블릿은 학원 코드, 점주는 본사가 준 점주 코드
+create or replace function lms_join_branch(p_code text, p_name text, p_role text default 'teacher') returns json language plpgsql security definer set search_path = public as $$
+declare bid uuid;
+begin
+  if auth.uid() is null then raise exception '로그인이 필요해요'; end if;
+  if exists (select 1 from lms_members where user_id = auth.uid()) then raise exception '이미 학원에 속한 계정이에요'; end if;
+  if p_role = 'owner' then
+    select id into bid from lms_branches where owner_code = upper(trim(p_code));
+    if bid is null then raise exception '점주 코드를 찾을 수 없어요'; end if;
+    if exists (select 1 from lms_members where branch_id = bid and role = 'owner') then raise exception '이미 점주가 등록된 지점이에요'; end if;
+  elsif p_role in ('teacher', 'kiosk') then
+    select id into bid from lms_branches where join_code = upper(trim(p_code));
+    if bid is null then raise exception '학원 코드를 찾을 수 없어요'; end if;
+  else
+    raise exception '역할이 올바르지 않아요';
+  end if;
+  insert into lms_members (user_id, branch_id, role, email, name) values (auth.uid(), bid, p_role, auth.jwt()->>'email', p_name);
+  return lms_me();
+end $$;
+
+-- 점주: 정산서 확인
+create or replace function lms_confirm_settlement(p_id uuid) returns void language sql security definer set search_path = public as $$
+  update lms_settlements set status = 'confirmed', confirmed_at = now()
+   where id = p_id and status = 'issued' and branch_id = lms_my_branch() and lms_my_role() = 'owner'
+$$;
+
+do $$ begin
+  begin alter publication supabase_realtime add table lms_settlements; exception when duplicate_object then null; end;
+end $$;

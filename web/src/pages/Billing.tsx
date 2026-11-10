@@ -1,3 +1,4 @@
+import { MyRoyalty } from './Franchise'
 import { onlinePayReady } from '../lib/payments'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, Download, Percent, Plus, Receipt, Sparkles, Tag, Users } from 'lucide-react'
@@ -20,6 +21,7 @@ export default function Billing(_: { go: (r: Route) => void }) {
   return (
     <div>
       <PageHead title="결제" sub="상품(가격표) → 청구(학생별) → 수납(받은 돈) 순서로 관리합니다. 할인은 청구할 때 학생별로 붙어요." />
+      <MyRoyalty />
       <Tabs value={tab} onChange={setTab} className="mb-5" items={[{ value: 'invoices', label: '청구 · 수납' }, { value: 'products', label: '상품 · 특강' }, { value: 'discounts', label: '할인 규칙' }]} />
       <AnimatePresence mode="wait">
         <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease }}>

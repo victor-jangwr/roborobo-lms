@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  BarChart3, CalendarCheck2, NotebookPen, MessagesSquare, CalendarRange, Clock3, LayoutDashboard, LogOut, Menu, Settings2, Tablet, Users, Wallet, Layers, Building2,
+  BarChart3, CalendarCheck2, Network, NotebookPen, MessagesSquare, CalendarRange, Clock3, LayoutDashboard, LogOut, Menu, Settings2, Tablet, Users, Wallet, Layers, Building2,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useStore } from '../lib/store'
@@ -13,9 +13,10 @@ import { useEffect } from 'react'
 import { Cloud, CloudOff, Loader2 } from 'lucide-react'
 import { Avatar, Button, Field, Input, Modal, ease } from './ui'
 
-export type Route = 'dashboard' | 'chat' | 'consult' | 'classes' | 'students' | 'timetable' | 'schedule' | 'billing' | 'stats' | 'config' | 'kiosk'
+export type Route = 'franchise' | 'dashboard' | 'chat' | 'consult' | 'classes' | 'students' | 'timetable' | 'schedule' | 'billing' | 'stats' | 'config' | 'kiosk'
 
 export const NAV: { route: Route; label: string; icon: typeof Users; roles: string[] }[] = [
+  { route: 'franchise', label: '가맹 본사', icon: Network, roles: ['hq'] },
   { route: 'dashboard', label: '대시보드', icon: LayoutDashboard, roles: ['hq', 'owner', 'teacher'] },
   { route: 'chat', label: '메신저', icon: MessagesSquare, roles: ['hq', 'owner', 'teacher'] },
   { route: 'consult', label: '상담', icon: NotebookPen, roles: ['hq', 'owner', 'teacher'] },
@@ -28,12 +29,20 @@ export const NAV: { route: Route; label: string; icon: typeof Users; roles: stri
   { route: 'config', label: '설정', icon: Settings2, roles: ['hq', 'owner'] },
 ]
 
+/** 본사 관리자 계정이면 원장이어도 '가맹 본사' 메뉴를 봄 */
+export function canSee(route: Route, role: string, hq: boolean) {
+  const n = NAV.find(x => x.route === route)
+  if (!n) return false
+  return n.roles.includes(role) || (route === 'franchise' && hq)
+}
+
 function NavList({ route, go, onPick }: { route: Route; go: (r: Route) => void; onPick?: () => void }) {
   const role = useStore(s => s.session?.role ?? 'owner')
+  const hq = useStore(s => !!s.cloudMe?.hq_org_id)
   const unread = useStore(s => totalUnread(s, s.me()))
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.filter(n => n.roles.includes(role)).map(n => {
+      {NAV.filter(n => canSee(n.route, role, hq)).map(n => {
         const on = route === n.route
         return (
           <button key={n.route} onClick={() => { go(n.route); onPick?.() }}

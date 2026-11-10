@@ -39,7 +39,11 @@ export async function testCfg(c: CloudCfg): Promise<string | null> {
   } catch (e) { return (e as Error).message }
 }
 
-export interface Me { branch_id: string; role: 'owner' | 'teacher' | 'kiosk'; teacher_id: string | null; branch_name: string; join_code: string | null }
+export interface Me {
+  branch_id: string; role: 'owner' | 'teacher' | 'kiosk'; teacher_id: string | null; branch_name: string; join_code: string | null
+  branch_kind?: 'direct' | 'franchise'; org_id?: string | null; org_name?: string | null
+  hq_org_id?: string | null          // 본사 관리자면 본사 id
+}
 
 export async function fetchMe(): Promise<Me | null> {
   const { data, error } = await cloud!.rpc('lms_me')

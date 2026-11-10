@@ -116,7 +116,7 @@ function Auth() {
 function Onboard({ onDone }: { onDone: () => void }) {
   const [tab, setTab] = useState<'new' | 'join'>('new')
   const [name, setName] = useState('로보로보코딩랩'), [code, setCode] = useState(''), [person, setPerson] = useState('')
-  const [role, setRole] = useState<'teacher' | 'kiosk'>('teacher')
+  const [role, setRole] = useState<'teacher' | 'kiosk' | 'owner'>('teacher')
   const [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const go = async () => {
     setBusy(true); setErr('')
@@ -135,12 +135,12 @@ function Onboard({ onDone }: { onDone: () => void }) {
     <div>
       <h1 className="text-[24px] font-bold tracking-tight">학원 연결</h1>
       <p className="text-muted mt-1.5 text-[14px]">이 계정을 어느 학원에서 쓸지 정해요.</p>
-      <div className="flex gap-2.5 mt-6"><Opt v="new" icon={<Building2 size={18} />} t="새 학원 만들기" b="원장님" /><Opt v="join" icon={<UserPlus size={18} />} t="학원 코드로 참여" b="선생님 · 출결 태블릿" /></div>
+      <div className="flex gap-2.5 mt-6"><Opt v="new" icon={<Building2 size={18} />} t="새 학원 만들기" b="원장님" /><Opt v="join" icon={<UserPlus size={18} />} t="코드로 참여" b="선생님 · 태블릿 · 가맹 점주" /></div>
       <form className="mt-5 grid gap-4" onSubmit={e => { e.preventDefault(); void go() }}>
         {tab === 'new' ? <Field label="학원 이름"><Input id="ob-name" required value={name} onChange={e => setName(e.target.value)} /></Field> : <>
-          <Field label="학원 코드" hint="원장님 화면의 설정 → 계정에 있는 6자리 코드"><Input id="ob-code" required value={code} onChange={e => setCode(e.target.value.toUpperCase())} className="font-mono tracking-[0.2em] uppercase" maxLength={6} /></Field>
-          <div className="flex gap-2">{(['teacher', 'kiosk'] as const).map(r => <button type="button" key={r} onClick={() => setRole(r)} className={cls('flex-1 h-10 rounded-lg border text-[14px] font-medium flex items-center justify-center gap-2', role === r ? 'border-accent text-accent bg-accent-soft' : 'border-line text-muted')}>{r === 'teacher' ? <UserPlus size={15} /> : <Tablet size={15} />}{r === 'teacher' ? '선생님' : '출결 태블릿'}</button>)}</div>
-          {role === 'teacher' && <Field label="이름"><Input id="ob-person" required value={person} onChange={e => setPerson(e.target.value)} /></Field>}
+          <Field label={role === 'owner' ? '점주 코드' : '학원 코드'} hint={role === 'owner' ? '본사에서 받은 8자리 코드' : '원장님 화면의 설정 → 계정에 있는 6자리 코드'}><Input id="ob-code" required value={code} onChange={e => setCode(e.target.value.toUpperCase())} className="font-mono tracking-[0.2em] uppercase" maxLength={role === 'owner' ? 8 : 6} /></Field>
+          <div className="flex gap-2">{(['teacher', 'kiosk', 'owner'] as const).map(r => <button type="button" key={r} onClick={() => setRole(r)} className={cls('flex-1 h-10 rounded-lg border text-[14px] font-medium flex items-center justify-center gap-1.5', role === r ? 'border-accent text-accent bg-accent-soft' : 'border-line text-muted')}>{r === 'teacher' ? <UserPlus size={15} /> : r === 'kiosk' ? <Tablet size={15} /> : <Building2 size={15} />}{r === 'teacher' ? '선생님' : r === 'kiosk' ? '출결 태블릿' : '가맹 점주'}</button>)}</div>
+          {role !== 'kiosk' && <Field label="이름"><Input id="ob-person" required value={person} onChange={e => setPerson(e.target.value)} /></Field>}
         </>}
         {err && <p className="text-[13px] text-bad">{err}</p>}
         <Button type="submit" variant="primary" size="lg" disabled={busy}>{busy ? '처리 중…' : tab === 'new' ? '학원 만들기' : '참여하기'}</Button>

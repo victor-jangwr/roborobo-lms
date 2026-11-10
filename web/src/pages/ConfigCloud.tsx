@@ -128,3 +128,44 @@ export function SmsStatusPill({ status }: { status?: string }) {
   const [t, tone] = map[status] ?? [status, 'neutral']
   return <Pill tone={tone}>{t}</Pill>
 }
+
+/** 지점·가맹 탭 (서버 모드): 본사 만들기 / 소속 본사 표시 */
+export function OrgSetup({ go }: { go?: () => void }) {
+  const me = useStore(s => s.cloudMe)
+  const toast = useStore(s => s.toast)
+  const [name, setName] = useState('로보로보코딩랩 본사')
+  const [busy, setBusy] = useState(false)
+  if (!me) return null
+  if (me.hq_org_id) return (
+    <Card className="p-5">
+      <h3 className="font-semibold">가맹 본사 · {me.org_name}</h3>
+      <p className="text-[13px] text-muted mt-1">이 계정은 본사 관리자예요. 왼쪽 메뉴의 <b>가맹 본사</b>에서 지점·계약·로열티 정산을 관리해요. 이 지점({me.branch_name})은 {me.branch_kind === 'direct' ? '직영점' : '가맹점'}이에요.</p>
+      {go && <Button className="mt-3" variant="primary" onClick={go}>가맹 본사 열기</Button>}
+    </Card>
+  )
+  if (me.org_id) return (
+    <Card className="p-5">
+      <h3 className="font-semibold">{me.org_name} 가맹점</h3>
+      <p className="text-[13px] text-muted mt-1">로열티 정산서는 결제 메뉴 맨 위에서 확인할 수 있어요. 본사는 이 지점의 학생 명단·반·출결·수납 합계를 볼 수 있고, 상담 기록과 메신저는 볼 수 없어요.</p>
+    </Card>
+  )
+  return (
+    <Card className="p-5">
+      <h3 className="font-semibold">가맹 본사 만들기</h3>
+      <p className="text-[13px] text-muted mt-1">본사를 만들면 이 지점은 직영점이 되고, 이 계정으로 가맹점을 만들어 점주를 초대하고 로열티를 정산할 수 있어요.</p>
+      <div className="flex gap-2 mt-4 max-w-[440px]">
+        <Input id="org-name" value={name} onChange={e => setName(e.target.value)} />
+        <Button variant="primary" disabled={busy || !name} onClick={async () => {
+          setBusy(true)
+          try {
+            const { error } = await cloud!.rpc('lms_create_org', { p_name: name })
+            if (error) throw error
+            const { data } = await cloud!.rpc('lms_me')
+            useStore.setState(s => ({ cloudMe: s.cloudMe ? { ...s.cloudMe, ...(data as object) } : s.cloudMe }))
+            toast({ title: '본사를 만들었어요', body: '왼쪽 메뉴에 가맹 본사가 생겼어요.', tone: 'good' })
+          } catch (e) { toast({ title: '만들지 못했어요', body: errText(e), tone: 'bad' }) } finally { setBusy(false) }
+        }}>만들기</Button>
+      </div>
+    </Card>
+  )
+}

@@ -7,7 +7,8 @@ function GlobalStudent() {
   const [edit, setEdit] = useState<Partial<Student> | null>(null)
   return <><StudentDrawer id={id} onClose={() => open(null)} onEdit={(s) => { open(null); setEdit(s) }} /><StudentForm draft={edit} onClose={() => setEdit(null)} /></>
 }
-import { NAV, Shell, type Route } from './components/Shell'
+import { Shell, canSee, type Route } from './components/Shell'
+import Franchise from './pages/Franchise'
 import { Toasts } from './components/ui'
 import { useStore } from './lib/store'
 import { isCloud } from './lib/cloud'
@@ -26,7 +27,7 @@ import Students, { StudentDrawer, StudentForm } from './pages/Students'
 import type { Student } from './lib/types'
 import Timetable from './pages/Timetable'
 
-const ROUTES: Route[] = ['dashboard', 'chat', 'consult', 'classes', 'students', 'timetable', 'schedule', 'billing', 'stats', 'config', 'kiosk']
+const ROUTES: Route[] = ['franchise', 'dashboard', 'chat', 'consult', 'classes', 'students', 'timetable', 'schedule', 'billing', 'stats', 'config', 'kiosk']
 const fromHash = (): Route => { const h = location.hash.replace('#', '') as Route; return ROUTES.includes(h) ? h : 'dashboard' }
 
 export default function App() {
@@ -39,7 +40,7 @@ export default function App() {
 
   if (!session) return <>{isCloud ? <CloudGate /> : <Login />}<Toasts /></>
   if (session.role === 'kiosk' || route === 'kiosk') return <><Kiosk onExit={session.role === 'kiosk' ? undefined : () => go('dashboard')} /><Toasts /></>
-  const allowed = NAV.find(n => n.route === route)?.roles.includes(session.role) ? route : 'dashboard'
-  const Page = { dashboard: Dashboard, chat: Chat, consult: Consult, classes: Classes, students: Students, timetable: Timetable, schedule: Schedule, billing: Billing, stats: Stats, config: Config, kiosk: Dashboard }[allowed]
+  const allowed = canSee(route, session.role, !!useStore.getState().cloudMe?.hq_org_id) ? route : 'dashboard'
+  const Page = { franchise: Franchise, dashboard: Dashboard, chat: Chat, consult: Consult, classes: Classes, students: Students, timetable: Timetable, schedule: Schedule, billing: Billing, stats: Stats, config: Config, kiosk: Dashboard }[allowed]
   return <><Shell route={allowed} go={go}><Page go={go} /></Shell><GlobalStudent /><Toasts /></>
 }
