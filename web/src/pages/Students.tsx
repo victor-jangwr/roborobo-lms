@@ -8,6 +8,7 @@ import { payState, paidOf, slotText, studentClasses, visibleConsults, weekLabel 
 import { CHANNEL_LABEL } from '../lib/consultSeed'
 import { STUDENT_TEMPLATE_COLS, readSheet, saveFile, workbook } from '../lib/excel'
 import { invoiceTotal, useStore } from '../lib/store'
+import { CATEGORY_LABEL, invoiceCategory } from '../lib/seed'
 import type { Student, StudentStatus } from '../lib/types'
 import { cls, fmtDate, fmtMonth, fmtShort, monthOf, nextGrade, phoneFmt, phoneValid, won } from '../lib/util'
 import { STATE } from './Dashboard'
@@ -323,7 +324,7 @@ export function StudentDrawer({ id, onClose, onEdit }: { id: string | null; onCl
         <ul className="flex flex-col gap-2">
           {invs.map(i => { const st = payState(db, i); return (
             <li key={i.id} className="rounded-xl border border-line p-3.5">
-              <div className="flex justify-between items-center"><p className="font-semibold">{fmtMonth(i.month)}</p><Pill tone={st === 'paid' ? 'good' : st === 'partial' ? 'late' : 'bad'}>{st === 'paid' ? '완납' : st === 'partial' ? '부분납' : '미납'}</Pill></div>
+              <div className="flex justify-between items-center"><p className="font-semibold">{fmtMonth(i.month)} <span className="text-[12px] font-medium text-muted">· {CATEGORY_LABEL[invoiceCategory(db, i)]}</span></p><Pill tone={st === 'paid' ? 'good' : st === 'partial' ? 'late' : 'bad'}>{st === 'paid' ? '완납' : st === 'partial' ? '부분납' : '미납'}</Pill></div>
               {i.items.map((it, j) => <p key={j} className="text-[13px] text-muted mt-1 flex justify-between gap-2"><span>{it.label}{it.discounts.map(d => ` · ${d.label}`).join('')}</span><span className="num">{won(it.price - it.discounts.reduce((a, d) => a + d.amount, 0))}</span></p>)}
               <p className="text-[13px] mt-2 flex justify-between border-t border-line/70 pt-2"><span className="text-muted">청구 {won(invoiceTotal(i))}</span><span className="num font-medium">수납 {won(paidOf(db, i))}</span></p>
             </li>) })}

@@ -7,11 +7,15 @@ import type { Route } from '../components/Shell'
 import { Button, Card, CardHead, CountUp, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, ease, rise } from '../components/ui'
 import { paidOf, payState, studentClasses, type PayState } from '../lib/derive'
 import { saveFile, workbook } from '../lib/excel'
-import { itemTotal, makeInvoices } from '../lib/seed'
+import { CATEGORY_LABEL, invoiceCategory, itemTotal, makeInvoices } from '../lib/seed'
 import { invoiceTotal, useStore } from '../lib/store'
-import type { DiscountRule, PayMethod, Product } from '../lib/types'
+import type { DiscountRule, InvoiceCategory, PayMethod, Product } from '../lib/types'
 import { StudentPicker } from '../components/StudentPicker'
 import { cls, fmtMonth, monthOf, parseYmd, won, ymd } from '../lib/util'
+
+function CatPill({ c }: { c: InvoiceCategory }) {
+  return <span className={cls('inline-block text-[11px] font-semibold px-1.5 h-[18px] leading-[18px] rounded mb-1', c === 'material' ? 'bg-warn/15 text-warn' : c === 'special' ? 'bg-accent-soft text-accent' : 'bg-sunken text-muted')}>{CATEGORY_LABEL[c]}</span>
+}
 
 const PS: Record<PayState, [string, 'good' | 'late' | 'bad']> = { paid: ['완납', 'good'], partial: ['부분납', 'late'], unpaid: ['미납', 'bad'] }
 const KIND: Record<Product['kind'], string> = { tuition: '정규 수업', special: '특강', material: '교재·교구' }
@@ -40,7 +44,9 @@ function Invoices() {
   const [filter, setFilter] = useState<'all' | PayState>('all')
   const [payId, setPayId] = useState<string | null>(null)
   const [preview, setPreview] = useState(false)
-  const invs = db.invoices.filter(i => i.month === month)
+  const [cat, setCat] = useState<'all' | InvoiceCategory>('all')
+  const monthInvs = db.invoices.filter(i => i.month === month)
+  const invs = monthInvs.filter(i => cat === 'all' || invoiceCategory(db, i) === cat)
   const total = invs.reduce((a, i) => a + invoiceTotal(i), 0)
   const paid = invs.reduce((a, i) => a + Math.min(paidOf(db, i), invoiceTotal(i)), 0)
   const disc = invs.reduce((a, i) => a + i.items.reduce((b, it) => b + it.discounts.reduce((c, d) => c + d.amount, 0), 0), 0)
@@ -73,8 +79,11 @@ function Invoices() {
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-line">
+          <div className="flex gap-1.5">{(['all', 'tuition', 'material', 'special'] as const).map(c => { const n = monthInvs.filter(i => c === 'all' || invoiceCategory(db, i) === c).length; return (c === 'all' || n > 0) && <button key={c} onClick={() => setCat(c)} className={cls('h-8 px-3 rounded-full text-[13px] border transition-colors', cat === c ? 'bg-ink text-bg border-ink' : 'border-line text-muted hover:text-ink')}>{c === 'all' ? '전체 청구' : CATEGORY_LABEL[c]} <span className="num opacity-70">{n}</span></button> })}</div>
+          <span className="w-px h-6 bg-line hidden sm:block" />
           <Tabs value={filter} onChange={setFilter} items={[{ value: 'all', label: '전체', count: invs.length }, { value: 'unpaid', label: '미납', count: invs.filter(i => payState(db, i) === 'unpaid').length }, { value: 'partial', label: '부분납', count: invs.filter(i => payState(db, i) === 'partial').length }, { value: 'paid', label: '완납', count: invs.filter(i => payState(db, i) === 'paid').length }]} />
         </div>
+        <p className="px-4 py-2 text-[12px] text-muted bg-sunken/40 border-b border-line/60">수강료와 교재·교구비는 청구서가 따로 있어서 각각 수납을 입력해요.</p>
         {shown.length === 0 ? <Empty title={invs.length ? '해당하는 청구가 없어요' : `${fmtMonth(month)} 청구가 아직 없어요`} body={invs.length ? undefined : '수강료 일괄 청구를 누르면 반에 연결된 수강료로 한 번에 만들어져요.'} /> : (
           <div className="overflow-x-auto thin-scroll">
             <table className="w-full text-[14px] min-w-[820px]">
@@ -86,7 +95,7 @@ function Invoices() {
                   return (
                     <tr key={i.id} className="border-t border-line/60 hover:bg-sunken/40 align-top">
                       <td className="px-4 py-3 font-semibold whitespace-nowrap">{s?.name}<p className="text-[12px] text-faint font-normal">{s?.grade}</p></td>
-                      <td className="px-4 py-3">{i.items.map((it, j) => <p key={j} className="text-[13px]">{it.label}{it.discounts.length > 0 && <span className="text-accent"> · {it.discounts.map(d => d.label).join(', ')}</span>}</p>)}</td>
+                      <td className="px-4 py-3"><CatPill c={invoiceCategory(db, i)} />{i.items.map((it, j) => <p key={j} className="text-[13px]">{it.label}{it.discounts.length > 0 && <span className="text-accent"> · {it.discounts.map(d => d.label).join(', ')}</span>}</p>)}</td>
                       <td className="px-4 py-3 num text-muted">{price.toLocaleString()}</td>
                       <td className="px-4 py-3 num text-accent">{price - t > 0 ? `-${(price - t).toLocaleString()}` : '-'}</td>
                       <td className="px-4 py-3 num font-semibold">{t.toLocaleString()}</td>
@@ -102,7 +111,7 @@ function Invoices() {
         )}
       </Card>
 
-      <Modal open={preview} onClose={() => setPreview(false)} width={600} title={`${fmtMonth(month)} 수강료 일괄 청구`} sub="반에 연결된 수강료 상품으로 재원 학생 전원에게 같은 금액을 청구하고, 학생별 고정 할인을 자동으로 적용합니다. 이미 만든 청구는 건너뛰어요."
+      <Modal open={preview} onClose={() => setPreview(false)} width={600} title={`${fmtMonth(month)} 수강료 일괄 청구`} sub="반에 연결된 수강료로 재원 학생 전원에게 청구하고, 학생별 할인을 자동 적용합니다. 매달 받는 교재·교구비는 수강료와 따로 청구서가 만들어져요. 이미 만든 청구는 건너뛰어요."
         footer={<><Button variant="ghost" onClick={() => setPreview(false)}>취소</Button><Button variant="primary" disabled={!pending.length} onClick={() => { const n = gen(month); toast({ title: `청구 ${n}건을 만들었어요`, tone: 'good' }); setPreview(false) }}>{pending.length ? `${pending.length}건 청구 만들기` : '새로 만들 청구 없음'}</Button></>}>
         {pending.length === 0 ? <p className="text-[14px] text-muted">이 달은 모든 학생의 수강료 청구가 이미 있어요.</p> : (
           <>
@@ -110,7 +119,7 @@ function Invoices() {
               {[['청구 건수', `${pending.length}건`], ['할인 적용', `${pending.filter(p => p.items.some(it => it.discounts.length)).length}명`], ['청구 합계', won(pending.reduce((a, p) => a + invoiceTotal(p), 0))]].map(([k, v]) => <div key={k} className="rounded-lg bg-sunken p-2.5"><p className="text-[12px] text-muted">{k}</p><p className="font-bold num">{v}</p></div>)}
             </div>
             <ul className="max-h-[280px] overflow-y-auto thin-scroll divide-y divide-line/60 text-[13px]">
-              {pending.map(p => <li key={p.id} className="flex justify-between gap-3 py-2"><span><b>{db.students.find(s => s.id === p.studentId)?.name}</b> <span className="text-muted">{p.items.map(it => it.label.split(' · ')[0]).join(', ')}</span>{p.items.some(it => it.discounts.length) && <span className="text-accent"> · 할인</span>}</span><span className="num font-medium">{won(invoiceTotal(p))}</span></li>)}
+              {pending.map(p => <li key={p.id} className="flex justify-between gap-3 py-2"><span><b>{db.students.find(s => s.id === p.studentId)?.name}</b> <span className="text-muted">{CATEGORY_LABEL[p.category ?? 'tuition']} · {p.items.map(it => it.label.split(' · ')[0]).join(', ')}</span>{p.items.some(it => it.discounts.length) && <span className="text-accent"> · 할인</span>}</span><span className="num font-medium">{won(invoiceTotal(p))}</span></li>)}
             </ul>
           </>
         )}
@@ -131,7 +140,7 @@ function PayModal({ id, onClose }: { id: string | null; onClose: () => void }) {
   if (!inv) return <Modal open={false} onClose={onClose} title="">{null}</Modal>
   const s = db.students.find(x => x.id === inv.studentId)!
   return (
-    <Modal open={!!id} onClose={onClose} width={440} title="수납 입력" sub={<>{s.name} · {fmtMonth(inv.month)} · 남은 금액 <b className="text-ink num">{won(remain)}</b></>}
+    <Modal open={!!id} onClose={onClose} width={440} title={`${CATEGORY_LABEL[invoiceCategory(db, inv)]} 수납 입력`} sub={<>{s.name} · {fmtMonth(inv.month)} · 남은 금액 <b className="text-ink num">{won(remain)}</b></>}
       footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="primary" disabled={amount <= 0} onClick={() => { add(inv.id, amount, method); toast({ title: `${s.name} ${won(amount)} 수납`, body: amount >= remain ? '완납 처리됐어요' : `${won(remain - amount)} 남았어요`, tone: 'good' }); onClose() }}>수납 저장</Button></>}>
       <div className="grid gap-4">
         <Field label="받은 금액"><Input id="pay-amt" type="number" step={1000} value={amount} onChange={e => setAmount(Number(e.target.value))} className="num text-[16px] font-semibold" /></Field>

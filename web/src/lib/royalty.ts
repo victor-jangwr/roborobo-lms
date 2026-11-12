@@ -52,13 +52,14 @@ export function monthIndex(startDate: string, month: string) {
   return (y - sy) * 12 + (m - sm) + 1
 }
 
-/** 그 달 순매출과 유료 수강생 수 */
+/** 그 달 순매출(수강료·특강, 교재·교구비 제외)과 유료 수강생 수 */
 export function monthRevenue(month: string, payments: Payment[], invoices: Invoice[]) {
   const inv = new Map(invoices.map(i => [i.id, i]))
   const by = new Map<string, number>()
   let revenue = 0
   for (const p of payments) {
     if (p.paidAt.slice(0, 7) !== month) continue
+    if (inv.get(p.invoiceId)?.category === 'material') continue   // 교재·교구비는 로열티 매출에서 뺌
     revenue += p.amount
     const sid = inv.get(p.invoiceId)?.studentId ?? `?${p.invoiceId}`
     by.set(sid, (by.get(sid) ?? 0) + p.amount)

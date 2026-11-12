@@ -98,7 +98,9 @@ export interface Invoice {
   items: InvoiceItem[]
   dueDate: string
   createdAt: string
+  category?: InvoiceCategory  // 수강료와 교재·교구비는 따로 청구·결제
 }
+export type InvoiceCategory = 'tuition' | 'material' | 'special'
 
 export type PayMethod = 'card' | 'transfer' | 'cash' | 'etc'
 export interface Payment {

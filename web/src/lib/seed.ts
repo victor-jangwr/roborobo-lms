@@ -1,6 +1,6 @@
 // 미리보기용 예시 데이터. 실제 운영에서는 Supabase 데이터로 대체됩니다.
 import type {
-  Attendance, Branch, DiscountRule, Enrollment, Invoice, InvoiceItem, Klass, Makeup, Payment, Product,
+  Attendance, Branch, DiscountRule, Enrollment, Invoice, InvoiceCategory, InvoiceItem, Klass, Makeup, Payment, Product,
   Settings, SmsLog, Student, StudentDiscount, Teacher, Term, Consult, Channel, Message,
 } from './types'
 import { addDays, fromMin, monthOf, termFor, toMin, weekdayOf, ymd } from './util'
@@ -300,6 +300,33 @@ export function classItems(db: DB, studentId: string, k: Klass, month: string, m
 }
 
 const isRegular = (db: Pick<DB, 'products'>, it: InvoiceItem) => { const k = db.products.find(x => x.id === it.productId)?.kind; return k === 'tuition' || k === 'material' }
+/** 청구서 종류: 수강료 / 교재·교구비 / 특강 (예전 청구서는 항목으로 판단) */
+export function itemCategory(db: Pick<DB, 'products'>, it: InvoiceItem): InvoiceCategory {
+  const k = db.products.find(x => x.id === it.productId)?.kind
+  return k === 'material' ? 'material' : k === 'special' ? 'special' : 'tuition'
+}
+export function invoiceCategory(db: Pick<DB, 'products'>, inv: Invoice): InvoiceCategory {
+  if (inv.category) return inv.category
+  const cs = new Set(inv.items.map(it => itemCategory(db, it)))
+  return cs.has('special') ? 'special' : cs.size === 1 && cs.has('material') ? 'material' : 'tuition'
+}
+export const CATEGORY_LABEL: Record<InvoiceCategory, string> = { tuition: '수강료', material: '교재·교구비', special: '특강' }
+
+/** 수강료와 교재비가 한 청구서에 섞여 있으면(수납 전만) 둘로 나눔 */
+export function splitMixedInvoices(db: DB) {
+  let n = 0
+  const out: Invoice[] = []
+  for (const inv of db.invoices) {
+    const mats = inv.items.filter(it => itemCategory(db, it) === 'material')
+    const rest = inv.items.filter(it => itemCategory(db, it) !== 'material')
+    if (!mats.length || !rest.length || db.payments.some(p => p.invoiceId === inv.id)) { out.push(inv); continue }
+    n++
+    out.push({ ...inv, items: rest, category: invoiceCategory(db, { ...inv, items: rest, category: undefined }) })
+    out.push({ ...inv, id: `${inv.id}_m`, items: mats, category: 'material' })
+  }
+  return { invoices: n ? out : db.invoices, changed: n }
+}
+
 const paidAny = (db: Pick<DB, 'payments'>, invId: string) => db.payments.some(p => p.invoiceId === invId)
 
 /** 수납 전(돈을 하나도 안 받은) 이번 달 이후 청구서의 할인을 지금 규칙으로 다시 계산 */
@@ -358,7 +385,10 @@ export function makeInvoices(db: DB, month: string, today: string): Invoice[] {
     if (items.length) byStudent.set(s.id, items)
   }
   for (const [studentId, items] of byStudent) {
-    out.push({ id: `inv_${month}_${studentId}_${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items, dueDate: `${month}-10`, createdAt: today })
+    for (const cat of ['tuition', 'material'] as const) {
+      const its = items.filter(it => (itemCategory(db, it) === 'material') === (cat === 'material'))
+      if (its.length) out.push({ id: `inv_${month}_${studentId}_${cat[0]}${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items: its, dueDate: `${month}-10`, createdAt: today, category: cat })
+    }
   }
   return out
 }
@@ -367,5 +397,5 @@ export function specialInvoice(db: DB, productId: string, studentId: string, mon
   const p = db.products.find(x => x.id === productId)!
   const discounts: InvoiceItem['discounts'] = p.kind === 'special' ? [] : discountsFor(db, studentId, p.price, p.kind === 'material' ? 'material' : 'tuition')
   if (extra && extra.amount > 0) discounts.push(extra)
-  return { id: `inv_${productId}_${studentId}_${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items: [{ productId, label: p.name, price: p.price, discounts }], dueDate: addDays(today, 7), createdAt: today }
+  return { id: `inv_${productId}_${studentId}_${Math.random().toString(36).slice(2, 6)}`, branchId: B, studentId, month, items: [{ productId, label: p.name, price: p.price, discounts }], dueDate: addDays(today, 7), createdAt: today, category: p.kind === 'material' ? 'material' : p.kind === 'special' ? 'special' : 'tuition' }
 }

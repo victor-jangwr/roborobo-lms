@@ -36,6 +36,12 @@ export default function App() {
   const [route, setRoute] = useState<Route>(fromHash)
   useEffect(() => { const h = () => setRoute(fromHash()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h) }, [])
   useEffect(() => { const t = setInterval(tick, 20000); return () => clearInterval(t) }, [tick])
+  // 예전에 수강료와 교재비가 한 청구서로 묶인 것(수납 전)을 둘로 나눔
+  useEffect(() => {
+    if (!session) return
+    const n = useStore.getState().splitMixed()
+    if (n) useStore.getState().toast({ title: `교재·교구비 청구 ${n}건을 수강료와 따로 나눴어요`, body: '이제 각각 따로 수납할 수 있어요.', tone: 'info' })
+  }, [session])
   const go = (r: Route) => { if (location.hash !== '#' + r) location.hash = r; setRoute(r); window.scrollTo({ top: 0 }) }
 
   if (!session) return <>{isCloud ? <CloudGate /> : <Login />}<Toasts /></>

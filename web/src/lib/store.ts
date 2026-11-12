@@ -2,7 +2,7 @@
 // 실제 운영 버전에서는 같은 동작을 Supabase 호출로 바꿉니다 (src/lib/supabase 참고).
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { buildSeed, classItems, invoiceTotal, itemTotal, makeInvoices, reapplyDiscounts, repriceUnpaid, specialInvoice, type DB } from './seed'
+import { buildSeed, classItems, invoiceCategory, itemCategory, splitMixedInvoices, invoiceTotal, itemTotal, makeInvoices, reapplyDiscounts, repriceUnpaid, specialInvoice, type DB } from './seed'
 import type {
   Attendance, Channel, ClassSlot, Consult, Klass, Member, Message, Makeup, PayMethod, Product, Session, Settings, Student, Teacher, Term,
 } from './types'
@@ -84,6 +84,7 @@ interface State extends DB {
   deleteDiscountRule: (id: string) => number
   setRuleStudents: (ruleId: string, add: string[], remove: string[]) => number
   repriceProduct: (productId: string) => number
+  splitMixed: () => number
   toggleStudentDiscount: (studentId: string, ruleId: string) => void
   generateInvoices: (month: string) => number
   billSpecial: (productId: string, studentIds: string[], extra?: { label: string; amount: number }) => number
@@ -163,13 +164,18 @@ export const useStore = create<State>()(persist((set, get) => ({
     const st = s.students.find(x => x.id === studentId)
     if (!s.settings.autoBillOnEnroll || st?.status !== 'active') { set({ enrollments }); return null }
     const month = monthOf(start)
-    const regular = (i: Invoice) => i.items.every(it => { const kd = s.products.find(x => x.id === it.productId)?.kind; return kd === 'tuition' || kd === 'material' })
-    const inv = s.invoices.find(i => i.studentId === studentId && i.month === month && regular(i) && !s.payments.some(p => p.invoiceId === i.id))
     const items = classItems(s, studentId, k, month, 'enroll').filter(it => !s.invoices.some(i => i.studentId === studentId && i.month === month && i.items.some(x => x.label === it.label)))
     if (!items.length) { set({ enrollments }); return null }
-    const invoices = inv
-      ? s.invoices.map(i => i.id === inv.id ? { ...i, items: [...i.items, ...items] } : i)
-      : [...s.invoices, { id: uid('inv'), branchId: k.branchId, studentId, month, items, dueDate: `${month}-10` < s.clock.date ? addDays(s.clock.date, 7) : `${month}-10`, createdAt: s.clock.date }]
+    // 수강료와 교재·교구비는 청구서를 나눠서 따로 결제
+    let invoices = s.invoices
+    for (const cat of ['tuition', 'material'] as const) {
+      const its = items.filter(it => (itemCategory(s, it) === 'material') === (cat === 'material'))
+      if (!its.length) continue
+      const inv = invoices.find(i => i.studentId === studentId && i.month === month && invoiceCategory(s, i) === cat && !s.payments.some(p => p.invoiceId === i.id))
+      invoices = inv
+        ? invoices.map(i => i.id === inv.id ? { ...i, items: [...i.items, ...its], category: cat } : i)
+        : [...invoices, { id: uid('inv'), branchId: k.branchId, studentId, month, items: its, dueDate: `${month}-10` < s.clock.date ? addDays(s.clock.date, 7) : `${month}-10`, createdAt: s.clock.date, category: cat }]
+    }
     set({ enrollments, invoices })
     const price = items.reduce((a, it) => a + it.price, 0)
     const discounts = items.flatMap(it => it.discounts)
@@ -379,6 +385,11 @@ export const useStore = create<State>()(persist((set, get) => ({
     const studentDiscounts = ex ? s.studentDiscounts.filter(d => d !== ex) : [...s.studentDiscounts, { id: uid('sd'), studentId, ruleId }]
     const { invoices } = reapplyDiscounts({ ...s, studentDiscounts }, monthOf(s.clock.date), new Set([studentId]))
     set({ studentDiscounts, invoices })
+  },
+  splitMixed: () => {
+    const { invoices, changed } = splitMixedInvoices(get())
+    if (changed) set({ invoices })
+    return changed
   },
   repriceProduct: (productId) => {
     const s = get()
