@@ -6,7 +6,7 @@ import { buildSeed, classItems, invoiceTotal, itemTotal, makeInvoices, reapplyDi
 import type {
   Attendance, Channel, ClassSlot, Consult, Klass, Member, Message, Makeup, PayMethod, Product, Session, Settings, Student, Teacher, Term,
 } from './types'
-import { addDays, hm, monthOf, termFor, toMin, uid, weekdayOf, ymd } from './util'
+import { addDays, hm, monthOf, nextGrade, termFor, toMin, uid, weekdayOf, ymd } from './util'
 import { cloud, isCloud, type Me } from './cloud'
 import type { Invoice, SmsLog } from './types'
 
@@ -65,6 +65,7 @@ interface State extends DB {
   createNextTerm: () => string
 
   saveStudent: (s: Partial<Student> & { name: string }) => Student
+  bulkStudents: (ids: string[], patch: Partial<Pick<Student, 'status' | 'grade' | 'school' | 'memo'>> & { promote?: boolean; dropClasses?: boolean }) => { changed: number; dropped: number; keptPaid: number }
   importStudents: (rows: Omit<Student, 'id' | 'branchId' | 'code' | 'joinedAt' | 'status'>[]) => number
 
   kioskCheck: (code: string) => KioskResult
@@ -235,6 +236,23 @@ export const useStore = create<State>()(persist((set, get) => ({
     }
     set({ students: [...s.students, ns] })
     return ns
+  },
+  bulkStudents: (ids, patch) => {
+    const { promote, dropClasses, ...fields } = patch
+    const set_ = new Set(ids)
+    let changed = 0
+    set(s => ({ students: s.students.map(x => {
+      if (!set_.has(x.id)) return x
+      changed++
+      return { ...x, ...fields, ...(promote ? { grade: nextGrade(x.grade) } : {}) }
+    }) }))
+    let dropped = 0, keptPaid = 0
+    if (dropClasses) {
+      for (const sid of ids) for (const e of get().enrollments.filter(e => e.studentId === sid && !e.end)) {
+        const r = get().unenroll(sid, e.classId); dropped++; if (r.kept) keptPaid++
+      }
+    }
+    return { changed, dropped, keptPaid }
   },
   importStudents: (rows) => {
     let n = 0

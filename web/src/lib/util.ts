@@ -71,3 +71,13 @@ export function weekOf(t: TermLike | undefined, date: string): { no: number | nu
   const w = ws.find(w => w.monday === mondayOf(date))
   return { no: w?.no ?? null, total, vacation: w?.vacation }
 }
+
+/** 한 학년 올리기: 초6 → 중1, 중3 → 고1, 고3은 그대로 */
+export function nextGrade(g: string) {
+  const m = g.match(/^(초|중|고)(\d)$/)
+  if (!m) return g
+  const n = Number(m[2]) + 1
+  if (m[1] === '초') return n <= 6 ? `초${n}` : '중1'
+  if (m[1] === '중') return n <= 3 ? `중${n}` : '고1'
+  return n <= 3 ? `고${n}` : g
+}

@@ -1,6 +1,6 @@
 import { SmsStatusPill } from './ConfigCloud'
 import { AnimatePresence, motion } from 'framer-motion'
-import { CheckCircle2, Download, FileSpreadsheet, Plus, Search, Upload } from 'lucide-react'
+import { ArrowUpCircle, CheckCircle2, Download, FileSpreadsheet, GraduationCap, Layers, Percent, Plus, Search, ToggleLeft, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Route } from '../components/Shell'
 import { Avatar, Button, Card, Drawer, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, TeacherDot, ease } from '../components/ui'
@@ -8,8 +8,8 @@ import { payState, paidOf, slotText, studentClasses, visibleConsults, weekLabel 
 import { CHANNEL_LABEL } from '../lib/consultSeed'
 import { STUDENT_TEMPLATE_COLS, readSheet, saveFile, workbook } from '../lib/excel'
 import { invoiceTotal, useStore } from '../lib/store'
-import type { Student } from '../lib/types'
-import { cls, fmtDate, fmtMonth, fmtShort, monthOf, phoneFmt, phoneValid, won } from '../lib/util'
+import type { Student, StudentStatus } from '../lib/types'
+import { cls, fmtDate, fmtMonth, fmtShort, monthOf, nextGrade, phoneFmt, phoneValid, won } from '../lib/util'
 import { STATE } from './Dashboard'
 
 const STATUS = { active: ['재원', 'good'], paused: ['휴원', 'warn'], left: ['퇴원', 'neutral'] } as const
@@ -23,13 +23,21 @@ export default function Students(_: { go: (r: Route) => void }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [form, setForm] = useState<Partial<Student> | null>(null)
   const [importing, setImporting] = useState(false)
+  const [sel, setSel] = useState<string[]>([])
+  const [bulk, setBulk] = useState<BulkMode | null>(null)
   const month = monthOf(db.clock.date)
   const termId = db.terms.find(t => t.start <= db.clock.date && t.end >= db.clock.date)?.id
   const list = db.students.filter(s => (tab === 'all' || s.status === tab) && (!grade || s.grade === grade) && (!q || s.name.includes(q) || s.school.includes(q) || s.parentPhone.replace(/\D/g, '').includes(q.replace(/\D/g, '') || '@') || s.code === q))
     .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  const picked = sel.filter(id => db.students.some(s => s.id === id))
+  const allOn = list.length > 0 && list.every(s => picked.includes(s.id))
+  const someOn = !allOn && list.some(s => picked.includes(s.id))
+  const toggle = (id: string) => setSel(x => x.includes(id) ? x.filter(y => y !== id) : [...x, id])
+  const toggleAll = () => setSel(x => allOn ? x.filter(id => !list.some(s => s.id === id)) : [...new Set([...x, ...list.map(s => s.id)])])
 
   const exportXlsx = async () => {
-    const rows = list.map(s => ({ 이름: s.name, 출결번호: s.code, 학년: s.grade, 학교: s.school, 출생연도: s.birthYear, '학부모 이름': s.parentName, '학부모 연락처': s.parentPhone, 상태: STATUS[s.status][0], 수강반: studentClasses(db, s.id, termId).map(k => k.name).join(', '), 등록일: s.joinedAt }))
+    const src = picked.length ? db.students.filter(s => picked.includes(s.id)) : list
+    const rows = src.map(s => ({ 이름: s.name, 출결번호: s.code, 학년: s.grade, 학교: s.school, 출생연도: s.birthYear, '학부모 이름': s.parentName, '학부모 연락처': s.parentPhone, 상태: STATUS[s.status][0], 수강반: studentClasses(db, s.id, termId).map(k => k.name).join(', '), 등록일: s.joinedAt }))
     const r = await saveFile(`학생명단_${db.clock.date}.xlsx`, workbook([{ name: '학생 명단', rows }]))
     if (r === 'saved') toast({ title: `학생 ${rows.length}명을 엑셀로 저장했어요`, tone: 'good' })
     else if (r === 'unavailable') toast({ title: '이 화면에서는 파일 저장을 쓸 수 없어요', tone: 'warn' })
@@ -40,7 +48,7 @@ export default function Students(_: { go: (r: Route) => void }) {
       <PageHead title="학생" sub="등록하면 출결 번호가 자동으로 발급됩니다."
         right={<>
           <Button icon={<Upload size={15} />} onClick={() => setImporting(true)}>엑셀 가져오기</Button>
-          <Button icon={<Download size={15} />} onClick={exportXlsx}>엑셀 내보내기</Button>
+          <Button icon={<Download size={15} />} onClick={exportXlsx}>{picked.length ? `선택 ${picked.length}명 내보내기` : '엑셀 내보내기'}</Button>
           <Button variant="primary" icon={<Plus size={16} />} onClick={() => setForm({ grade: '초4', birthYear: Number(db.clock.date.slice(0, 4)) - 10 })}>학생 등록</Button>
         </>} />
       <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -49,7 +57,8 @@ export default function Students(_: { go: (r: Route) => void }) {
           { value: 'paused', label: '휴원', count: db.students.filter(s => s.status === 'paused').length },
           { value: 'left', label: '퇴원', count: db.students.filter(s => s.status === 'left').length },
           { value: 'all', label: '전체' }]} />
-        <Select id="st-grade" value={grade} onChange={e => setGrade(e.target.value)} className="w-auto"><option value="">전체 학년</option>{GRADES.map(g => <option key={g}>{g}</option>)}</Select>
+        <div className="w-[130px]"><Select id="st-grade" value={grade} onChange={e => setGrade(e.target.value)}><option value="">전체 학년</option>{GRADES.map(g => <option key={g}>{g}</option>)}</Select></div>
+        {list.length > 0 && <button onClick={toggleAll} className="text-[13px] text-accent font-medium">{allOn ? '선택 해제' : `${list.length}명 모두 선택`}</button>}
         <div className="relative ml-auto w-full sm:w-72"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><Input id="st-q" placeholder="이름, 학교, 연락처, 출결번호" value={q} onChange={e => setQ(e.target.value)} className="pl-9" /></div>
       </div>
 
@@ -57,6 +66,7 @@ export default function Students(_: { go: (r: Route) => void }) {
         <div className="overflow-x-auto thin-scroll">
           <table className="w-full text-[14px] min-w-[860px]">
             <thead><tr className="text-left text-[12px] text-muted bg-sunken/60 border-b border-line">
+              <th className="pl-4 pr-1 py-2.5 w-[44px]"><Check on={allOn} mixed={someOn} onClick={toggleAll} label="보이는 학생 모두 선택" /></th>
               {['학생', '학년 · 학교', '수강 반', '출결번호', '학부모 연락처', `${Number(month.slice(5))}월 수납`, '상태'].map(h => <th key={h} className="font-medium px-4 py-2.5">{h}</th>)}
             </tr></thead>
             <tbody>
@@ -65,7 +75,8 @@ export default function Students(_: { go: (r: Route) => void }) {
                 const invs = db.invoices.filter(x => x.studentId === s.id && x.month === month)
                 const ps = invs.length ? (invs.every(x => payState(db, x) === 'paid') ? 'paid' : invs.some(x => paidOf(db, x) > 0) ? 'partial' : 'unpaid') : null
                 return (
-                  <motion.tr key={s.id} initial={{ opacity: 0.001 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(i, 20) * 0.015 }} onClick={() => setOpenId(s.id)} className="border-b border-line/60 last:border-0 hover:bg-sunken/50 cursor-pointer">
+                  <motion.tr key={s.id} initial={{ opacity: 0.001 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(i, 20) * 0.015 }} onClick={() => setOpenId(s.id)} className={cls('border-b border-line/60 last:border-0 cursor-pointer transition-colors', picked.includes(s.id) ? 'bg-accent-soft/50 hover:bg-accent-soft/70' : 'hover:bg-sunken/50')}>
+                    <td className="pl-4 pr-1 py-2.5" onClick={e => { e.stopPropagation(); toggle(s.id) }}><Check on={picked.includes(s.id)} label={`${s.name} 선택`} /></td>
                     <td className="px-4 py-2.5"><div className="flex items-center gap-2.5"><Avatar name={s.name} size={30} color={db.teachers.find(t => t.id === ks[0]?.teacherId)?.color} /><span className="font-semibold">{s.name}</span></div></td>
                     <td className="px-4 py-2.5 text-muted">{s.grade} · {s.school}</td>
                     <td className="px-4 py-2.5"><div className="flex flex-wrap gap-1">{ks.map(k => <span key={k.id} className="text-[12px] px-2 h-[22px] leading-[22px] rounded-md bg-sunken">{k.name}</span>)}{!ks.length && <span className="text-faint text-[13px]">없음</span>}</div></td>
@@ -82,10 +93,111 @@ export default function Students(_: { go: (r: Route) => void }) {
         </div>
       </Card>
 
+      <AnimatePresence>
+        {picked.length > 0 && (
+          <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }} transition={{ duration: 0.25, ease }}
+            className="fixed z-40 bottom-4 left-4 right-4 lg:left-[260px] flex justify-center pointer-events-none" style={{ bottom: 'max(16px, env(safe-area-inset-bottom, 0px))' }}>
+            <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-2xl bg-ink text-bg px-3 py-2.5 shadow-[0_12px_40px_rgb(var(--shadow)/0.28)] max-w-full">
+              <span className="px-2 text-[14px] font-semibold num">{picked.length}명 선택</span>
+              <span className="w-px h-5 bg-bg/20 mx-1" />
+              {BULK.map(b => (
+                <button key={b.mode} onClick={() => setBulk(b.mode)} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15 transition-colors"><b.icon size={15} />{b.label}</button>
+              ))}
+              <button onClick={exportXlsx} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15"><Download size={15} />엑셀</button>
+              <button onClick={() => setSel([])} aria-label="선택 해제" className="grid place-items-center w-9 h-9 rounded-lg hover:bg-bg/15"><X size={16} /></button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <BulkModal mode={bulk} ids={picked} onClose={() => setBulk(null)} onDone={() => { setBulk(null) }} />
+
       <StudentForm draft={form} onClose={() => setForm(null)} />
       <StudentDrawer id={openId} onClose={() => setOpenId(null)} onEdit={(s) => { setOpenId(null); setForm(s) }} />
       <ImportModal open={importing} onClose={() => setImporting(false)} />
     </div>
+  )
+}
+
+function Check({ on, mixed, onClick, label }: { on: boolean; mixed?: boolean; onClick?: () => void; label: string }) {
+  return (
+    <button type="button" role="checkbox" aria-checked={mixed ? 'mixed' : on} aria-label={label} onClick={e => { if (onClick) { e.stopPropagation(); onClick() } }}
+      className={cls('grid place-items-center w-5 h-5 rounded-md border-2 transition-colors', on || mixed ? 'bg-accent border-accent text-accent-ink' : 'border-line bg-surface hover:border-accent/60')}>
+      {on && <svg viewBox="0 0 12 12" className="w-3 h-3"><path d="M2.5 6.5l2.2 2.2L9.5 3.8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      {mixed && <span className="w-2.5 h-0.5 rounded bg-current" />}
+    </button>
+  )
+}
+
+type BulkMode = 'status' | 'grade' | 'discount' | 'class'
+const BULK: { mode: BulkMode; label: string; icon: typeof Layers }[] = [
+  { mode: 'status', label: '상태', icon: ToggleLeft },
+  { mode: 'grade', label: '학년·학교', icon: GraduationCap },
+  { mode: 'discount', label: '할인', icon: Percent },
+  { mode: 'class', label: '반 배정', icon: Layers },
+]
+
+/** 선택한 학생들 한꺼번에 바꾸기 */
+function BulkModal({ mode, ids, onClose, onDone }: { mode: BulkMode | null; ids: string[]; onClose: () => void; onDone: () => void }) {
+  const db = useStore(s => s)
+  const bulkStudents = useStore(s => s.bulkStudents), setRuleStudents = useStore(s => s.setRuleStudents), enrollMany = useStore(s => s.enrollMany), toast = useStore(s => s.toast)
+  const [status, setStatus] = useState<StudentStatus>('paused'), [drop, setDrop] = useState(true)
+  const [gMode, setGMode] = useState<'promote' | 'set' | 'school'>('promote'), [grade, setGrade] = useState('초4'), [school, setSchool] = useState('')
+  const [rule, setRule] = useState(''), [dMode, setDMode] = useState<'add' | 'remove'>('add')
+  const [classId, setClassId] = useState('')
+  const students = db.students.filter(s => ids.includes(s.id))
+  const names = students.slice(0, 4).map(s => s.name).join(', ') + (students.length > 4 ? ` 외 ${students.length - 4}명` : '')
+  const term = db.terms.find(t => t.start <= db.clock.date && t.end >= db.clock.date) ?? db.terms[db.terms.length - 1]
+  const classes = db.classes.filter(c => c.termId === (db.activeTermId ?? term?.id))
+  const k = classes.find(c => c.id === classId)
+  const already = k ? students.filter(s => db.enrollments.some(e => e.studentId === s.id && e.classId === k.id && !e.end)).length : 0
+  const enrolledNow = students.filter(s => db.enrollments.some(e => e.studentId === s.id && !e.end)).length
+
+  const run = () => {
+    if (mode === 'status') {
+      const r = bulkStudents(ids, { status, dropClasses: status !== 'active' && drop })
+      toast({ title: `${r.changed}명을 ${STATUS[status][0]}으로 바꿨어요`, body: r.dropped ? `수강 반 ${r.dropped}건에서 뺐어요${r.keptPaid ? ` · 수납한 청구 ${r.keptPaid}건은 남겼어요` : ''}` : undefined, tone: 'good' })
+    } else if (mode === 'grade') {
+      const r = gMode === 'promote' ? bulkStudents(ids, { promote: true }) : gMode === 'set' ? bulkStudents(ids, { grade }) : bulkStudents(ids, { school })
+      toast({ title: gMode === 'promote' ? `${r.changed}명 학년을 한 단계 올렸어요` : gMode === 'set' ? `${r.changed}명을 ${grade}로 바꿨어요` : `${r.changed}명 학교를 「${school}」로 바꿨어요`, tone: 'good' })
+    } else if (mode === 'discount') {
+      const r = db.discountRules.find(x => x.id === rule)!
+      const n = dMode === 'add' ? setRuleStudents(rule, ids, []) : setRuleStudents(rule, [], ids)
+      toast({ title: `${ids.length}명에게 ${r.name}을 ${dMode === 'add' ? '적용했어요' : '뺐어요'}`, body: n ? `수납 전 청구서 ${n}건에 바로 반영했어요` : '다음 청구부터 적용돼요', tone: 'good' })
+    } else if (mode === 'class' && k) {
+      const active = students.filter(s => s.status === 'active').map(s => s.id)
+      const r = enrollMany(active, k.id)
+      toast({ title: `${r.count}명을 「${k.name}」에 배정했어요`, body: r.billed ? `청구 합계 ${won(r.billed)} (할인 적용)` : undefined, tone: 'good' })
+    }
+    onDone()
+  }
+  const ok = mode === 'status' || (mode === 'grade' && (gMode !== 'school' || school.trim())) || (mode === 'discount' && rule) || (mode === 'class' && k)
+  const opt = (on: boolean) => cls('h-10 rounded-lg border text-[14px] font-medium transition-colors', on ? 'border-accent bg-accent-soft text-accent' : 'border-line text-muted hover:text-ink')
+  return (
+    <Modal open={!!mode} onClose={onClose} width={460} title={{ status: '상태 바꾸기', grade: '학년 · 학교 바꾸기', discount: '할인 넣기 · 빼기', class: '반에 배정하기' }[mode ?? 'status']} sub={`${ids.length}명 · ${names}`}
+      footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="primary" disabled={!ok} onClick={run}>{ids.length}명 적용</Button></>}>
+      {mode === 'status' && <div className="grid gap-4">
+        <div className="grid grid-cols-3 gap-2">{(['active', 'paused', 'left'] as const).map(st => <button key={st} type="button" onClick={() => setStatus(st)} className={opt(status === st)}>{STATUS[st][0]}</button>)}</div>
+        {status !== 'active' && enrolledNow > 0 && <label className="flex items-start gap-2 text-[14px]"><input type="checkbox" className="mt-1" checked={drop} onChange={e => setDrop(e.target.checked)} />
+          <span>수강 중인 반에서도 빼기<span className="block text-[12px] text-muted">{enrolledNow}명이 반에 배정돼 있어요. 아직 수납 전인 이번 달 청구는 함께 지워지고, 수납한 청구는 남아요.</span></span></label>}
+        {status === 'active' && <p className="text-[13px] text-muted">재원으로 바꿔도 반 배정은 따로 해야 해요. 하단 「반 배정」을 쓰세요.</p>}
+      </div>}
+      {mode === 'grade' && <div className="grid gap-4">
+        <div className="grid grid-cols-3 gap-2">{([['promote', '한 학년 올리기'], ['set', '학년 지정'], ['school', '학교 바꾸기']] as const).map(([v, t]) => <button key={v} type="button" onClick={() => setGMode(v)} className={opt(gMode === v)}>{t}</button>)}</div>
+        {gMode === 'promote' && <div className="rounded-lg bg-sunken p-3 text-[13px]"><p className="flex items-center gap-1.5 font-medium"><ArrowUpCircle size={15} className="text-accent" />새 학년 진급</p><p className="text-muted mt-1">초6 → 중1, 중3 → 고1처럼 학교급도 넘어가요. 학교 이름은 그대로라 진학한 학생은 따로 고쳐 주세요.</p>
+          <ul className="mt-2 flex flex-wrap gap-1.5">{students.slice(0, 8).map(s => <li key={s.id} className="text-[12px] px-2 py-0.5 rounded bg-surface">{s.name} {s.grade}→<b>{nextGrade(s.grade)}</b></li>)}{students.length > 8 && <li className="text-[12px] text-muted">…</li>}</ul></div>}
+        {gMode === 'set' && <Field label="학년"><Select id="bk-grade" value={grade} onChange={e => setGrade(e.target.value)}>{GRADES.map(g => <option key={g}>{g}</option>)}</Select></Field>}
+        {gMode === 'school' && <Field label="학교"><Input id="bk-school" autoFocus value={school} onChange={e => setSchool(e.target.value)} placeholder="예: 별내중" /></Field>}
+      </div>}
+      {mode === 'discount' && <div className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setDMode('add')} className={opt(dMode === 'add')}>할인 넣기</button><button type="button" onClick={() => setDMode('remove')} className={opt(dMode === 'remove')}>할인 빼기</button></div>
+        <Field label="할인"><Select id="bk-rule" value={rule} onChange={e => setRule(e.target.value)}><option value="">할인을 고르세요</option>{db.discountRules.map(r => <option key={r.id} value={r.id}>{r.name} · {r.type === 'percent' ? `${r.value}%` : won(r.value)}</option>)}</Select></Field>
+        <p className="text-[12px] text-muted">아직 수납 전인 이번 달 이후 청구서에 바로 반영돼요. 이미 수납한 청구서는 그대로예요.</p>
+      </div>}
+      {mode === 'class' && <div className="grid gap-4">
+        <Field label="반" hint={term ? `${term.name} 반` : undefined}><Select id="bk-class" value={classId} onChange={e => setClassId(e.target.value)}><option value="">반을 고르세요</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name} · {slotText(c)}</option>)}</Select></Field>
+        {k && <p className="text-[13px] text-muted">재원생 {students.filter(s => s.status === 'active').length}명을 배정해요{already ? ` (이미 수강 중 ${already}명은 건너뜀)` : ''}. {db.settings.autoBillOnEnroll && k.productId ? '반에 저장된 수강료·교재비가 자동으로 청구돼요.' : ''}</p>}
+      </div>}
+    </Modal>
   )
 }
 
