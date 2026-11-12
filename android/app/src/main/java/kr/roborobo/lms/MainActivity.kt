@@ -151,7 +151,11 @@ class MainActivity : Activity() {
             text = "문자 발송 켜기"; textSize = 15f; isChecked = api.enabled && SmsService.running
             setPadding(0, dp(10), 0, dp(6))
             setOnCheckedChangeListener { _, on ->
-                if (on && !hasPerm(Manifest.permission.SEND_SMS)) { isChecked = false; askPerms(); return@setOnCheckedChangeListener }
+                if (on && !hasPerm(Manifest.permission.SEND_SMS)) {
+                    isChecked = false
+                    toast("문자 권한이 없어서 켤 수 없어요. 권한을 허용한 뒤 다시 켜 주세요.")
+                    askPerms(); return@setOnCheckedChangeListener
+                }
                 api.enabled = on
                 if (on) SmsService.start(this@MainActivity) else SmsService.stop(this@MainActivity)
                 ui.postDelayed({ refresh() }, 400)
@@ -168,6 +172,7 @@ class MainActivity : Activity() {
         p.addView(text("권한 · 배터리", 16f, ink, true))
         p.addView(text("문자 보내기, 전화 상태, 통화 기록(발신 번호 확인), 알림 권한이 필요해요. 배터리 최적화에서 빼야 화면이 꺼져도 문자가 나가요.", 13f, muted))
         p.addView(button("권한 허용하기") { askPerms() })
+        p.addView(button("앱 설정 열기 (권한이 안 켜질 때)") { openAppSettings(PERMS.filter { !hasPerm(it) }) })
         p.addView(button("배터리 최적화에서 빼기") { batteryExempt() })
         root.addView(p)
 
@@ -178,9 +183,27 @@ class MainActivity : Activity() {
 
     private fun hasPerm(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
+    private fun permName(p: String) = when (p) {
+        Manifest.permission.SEND_SMS -> "SMS(문자)"
+        Manifest.permission.READ_PHONE_STATE -> "전화"
+        Manifest.permission.READ_CALL_LOG -> "통화 기록"
+        else -> "알림"
+    }
+
     private fun askPerms() {
         val need = PERMS.filter { !hasPerm(it) }
-        if (need.isEmpty()) toast("필요한 권한이 모두 허용돼 있어요") else requestPermissions(need.toTypedArray(), 1)
+        if (need.isEmpty()) { toast("필요한 권한이 모두 허용돼 있어요"); return }
+        val p = getSharedPreferences("lms_ui", MODE_PRIVATE)
+        // 이미 한 번 거절했고 다시 묻지 못하는 상태면 앱 설정 화면으로 바로 이동
+        val blocked = p.getBoolean("asked", false) && need.none { shouldShowRequestPermissionRationale(it) }
+        if (blocked) { openAppSettings(need); return }
+        p.edit().putBoolean("asked", true).apply()
+        requestPermissions(need.toTypedArray(), 1)
+    }
+
+    private fun openAppSettings(need: List<String>) {
+        toast("설정 → 권한에서 ${need.joinToString(", ") { permName(it) }}을 허용해 주세요. 회색이면 오른쪽 위 ⋮ → '제한된 설정 허용'을 먼저 누르세요.")
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -208,7 +231,7 @@ class MainActivity : Activity() {
             lines.add(if (api.enabled && SmsService.running) "● 문자 발송 켜짐" else "○ 문자 발송 꺼짐")
             if (SmsService.lastError.isNotEmpty()) lines.add("⚠ ${SmsService.lastError}")
         }
-        if (missing.isNotEmpty()) lines.add("⚠ 허용 안 된 권한 ${missing.size}개")
+        if (missing.isNotEmpty()) lines.add("⚠ 허용 안 된 권한: ${missing.joinToString(", ") { permName(it) }}")
         if (!battery) lines.add("⚠ 배터리 최적화 대상 (화면이 꺼지면 늦게 보낼 수 있어요)")
         status.text = lines.joinToString("\n")
         val good = api.loggedIn && api.enabled && SmsService.running && missing.isEmpty()
