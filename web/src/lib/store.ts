@@ -59,6 +59,8 @@ interface State extends DB {
 
   saveClass: (k: Omit<Klass, 'id' | 'branchId' | 'termId'> & { id?: string }) => string
   deleteClass: (id: string) => void
+  deleteClasses: (ids: string[]) => { classes: number; students: number; keptPaid: number } | null
+  deleteStudents: (ids: string[], opts?: { purgePaid?: boolean }) => { deleted: number; archived: string[] } | null
   enroll: (studentId: string, classId: string) => BillResult | null
   enrollMany: (studentIds: string[], classId: string) => { count: number; billed: number }
   unenroll: (studentId: string, classId: string) => { removed: boolean; kept: boolean }
@@ -154,7 +156,43 @@ export const useStore = create<State>()(persist((set, get) => ({
     set({ classes: [...s.classes, { ...k, id, branchId: s.session?.branchId ?? 'br_main', termId: s.activeTermId } as Klass] })
     return id
   },
-  deleteClass: (id) => set(s => ({ classes: s.classes.filter(c => c.id !== id), enrollments: s.enrollments.filter(e => e.classId !== id) })),
+  deleteClass: (id) => { get().deleteClasses([id]) },
+  // 반 여러 개 삭제 (원장만): 수강생은 반에서 빼고 수납 전 청구를 지움, 보강 일정도 함께 삭제. 지난 출결 기록은 남김
+  deleteClasses: (ids) => {
+    if (get().session?.role !== 'owner') return null
+    const set_ = new Set(ids)
+    let students = 0, keptPaid = 0
+    for (const e of get().enrollments.filter(e => set_.has(e.classId) && !e.end)) {
+      const r = get().unenroll(e.studentId, e.classId); students++; if (r.kept) keptPaid++
+    }
+    set(s => ({
+      classes: s.classes.filter(c => !set_.has(c.id)),
+      enrollments: s.enrollments.filter(e => !set_.has(e.classId)),
+      makeups: s.makeups.filter(m => !set_.has(m.classId)),
+    }))
+    return { classes: ids.length, students, keptPaid }
+  },
+  // 학생 여러 명 삭제 (원장만). 수납 기록이 있는 학생은 회계 기록을 지키려고 지우지 않고 퇴원 처리
+  deleteStudents: (ids, opts) => {
+    const s = get()
+    if (s.session?.role !== 'owner') return null
+    const paidIds = opts?.purgePaid ? new Set<string>() : new Set(s.invoices.filter(i => s.payments.some(p => p.invoiceId === i.id)).map(i => i.studentId))
+    const archive = ids.filter(id => paidIds.has(id))
+    const del = new Set(ids.filter(id => !paidIds.has(id)))
+    if (archive.length) get().bulkStudents(archive, { status: 'left', dropClasses: true })
+    set(st => ({
+      students: st.students.filter(x => !del.has(x.id)),
+      enrollments: st.enrollments.filter(e => !del.has(e.studentId)),
+      attendances: st.attendances.filter(a => !del.has(a.studentId)),
+      makeups: st.makeups.filter(m => !del.has(m.studentId)),
+      studentDiscounts: st.studentDiscounts.filter(d => !del.has(d.studentId)),
+      consults: st.consults.filter(c => !del.has(c.studentId)),
+      payments: st.payments.filter(p => !del.has(st.invoices.find(i => i.id === p.invoiceId)?.studentId ?? '')),
+      invoices: st.invoices.filter(i => !del.has(i.studentId)),
+      sms: st.sms.filter(m => !del.has(m.studentId)),
+    }))
+    return { deleted: del.size, archived: archive.map(id => s.students.find(x => x.id === id)?.name ?? '') }
+  },
   enroll: (studentId, classId) => {
     const s = get()
     if (s.enrollments.some(e => e.studentId === studentId && e.classId === classId && !e.end)) return null

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CopyPlus, Download, Lock, Pencil, Plus, Search, Trash2, UserPlus, X } from 'lucide-react'
+import { CheckSquare, CopyPlus, Download, Lock, Pencil, Plus, Search, Trash2, UserPlus, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Route } from '../components/Shell'
 import { Avatar, Button, Card, Drawer, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, TeacherDot, ease } from '../components/ui'
@@ -27,12 +27,20 @@ export default function Classes(_: { go: (r: Route) => void }) {
   const [edit, setEdit] = useState<Partial<Klass> | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [newTerm, setNewTerm] = useState(false)
+  const isOwner = session.role === 'owner'
+  const [picking, setPicking] = useState(false)
+  const [sel, setSel] = useState<string[]>([])
+  const [delOpen, setDelOpen] = useState(false)
 
   const list = db.classes.filter(c => c.termId === term.id && (!isTeacher || c.teacherId === session.teacherId) && (!q || c.name.includes(q) || db.teachers.find(t => t.id === c.teacherId)?.name.includes(q)))
   const count = (k: Klass) => db.enrollments.filter(e => e.classId === k.id && !e.end).length
   const days = day === 'all' ? WORK_DAYS : [Number(day)]
   const weeks = termWeeks(term).filter(w => w.no).length
 
+  const visible = list.filter(k => day === 'all' || k.slots.some(x => x.weekday === Number(day)))
+  const picked = sel.filter(id => db.classes.some(c => c.id === id))
+  const allOn = visible.length > 0 && visible.every(k => picked.includes(k.id))
+  const toggle = (id: string) => setSel(x => x.includes(id) ? x.filter(y => y !== id) : [...x, id])
   const exportXlsx = async () => {
     const rows = list.map(k => ({ 반: k.name, 강사: db.teachers.find(t => t.id === k.teacherId)?.name ?? '', 요일시간: slotText(k), 강의실: k.room, 정원: k.capacity, 인원: count(k), 수강료: db.products.find(p => p.id === k.productId)?.price ?? 0 }))
     const r = await saveFile(`반목록_${term.name.split(' (')[0]}.xlsx`, workbook([{ name: '반 목록', rows }]))
@@ -45,6 +53,7 @@ export default function Classes(_: { go: (r: Route) => void }) {
         right={<>
           <Button icon={<Download size={15} />} onClick={exportXlsx}>엑셀</Button>
           {!isTeacher && <Button icon={<CopyPlus size={15} />} onClick={() => setNewTerm(true)}>새 분기 만들기</Button>}
+          {isOwner && term.status !== 'closed' && <Button variant={picking ? 'soft' : undefined} icon={<CheckSquare size={15} />} onClick={() => { setPicking(!picking); setSel([]) }}>{picking ? '선택 끝내기' : '선택'}</Button>}
           {!locked && <Button variant="primary" icon={<Plus size={16} />} onClick={() => setEdit({ name: '', teacherId: db.teachers[0].id, room: '1강의실', capacity: 8, slots: [{ weekday: 1, start: '15:00', end: '16:20' }], productId: db.products.find(p => p.kind === 'tuition')?.id })}>반 만들기</Button>}
         </>} />
 
@@ -70,6 +79,13 @@ export default function Classes(_: { go: (r: Route) => void }) {
         </div>
       </div>
 
+      {picking && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-accent-soft/60 border border-accent/30 px-4 py-2.5 text-[14px]">
+        <span className="font-semibold">삭제할 반을 눌러서 고르세요</span>
+        <button className="text-accent font-medium" onClick={() => setSel(x => allOn ? x.filter(id => !visible.some(k => k.id === id)) : [...new Set([...x, ...visible.map(k => k.id)])])}>{allOn ? '보이는 반 선택 해제' : `보이는 ${visible.length}개 모두 선택`}</button>
+        <span className="ml-auto text-muted num">{picked.length}개 선택</span>
+        <Button size="sm" variant="danger" icon={<Trash2 size={14} />} disabled={!picked.length} onClick={() => setDelOpen(true)}>{picked.length ? `${picked.length}개 삭제` : '삭제'}</Button>
+      </div>}
+
       {locked && term.status === 'closed' && <p className="mb-4 text-[13px] text-muted flex items-center gap-2"><Lock size={14} />지난 분기는 기록 보관용이라 수정할 수 없어요.</p>}
 
       <div className="flex flex-col gap-6">
@@ -85,7 +101,7 @@ export default function Classes(_: { go: (r: Route) => void }) {
                   <div key={t} className="grid grid-cols-[56px_1fr] gap-3">
                     <p className="num font-mono text-[13px] font-semibold text-muted pt-3">{t}</p>
                     <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                      {slots.filter(x => x.s.start === t).map(({ k, s }, i) => <ClassCard key={k.id + s.start} k={k} slot={s} n={count(k)} i={i} onOpen={() => setOpenId(k.id)} />)}
+                      {slots.filter(x => x.s.start === t).map(({ k, s }, i) => <ClassCard key={k.id + s.start} k={k} slot={s} n={count(k)} i={i} picked={picking ? picked.includes(k.id) : undefined} onOpen={() => picking ? toggle(k.id) : setOpenId(k.id)} />)}
                     </div>
                   </div>
                 ))}
@@ -99,20 +115,53 @@ export default function Classes(_: { go: (r: Route) => void }) {
       <ClassForm draft={edit} termId={term.id} onClose={() => setEdit(null)} />
       <ClassDrawer id={openId} locked={locked} onClose={() => setOpenId(null)} onEdit={(k) => { setOpenId(null); setEdit(k) }} />
       <NewTermModal open={newTerm} onClose={() => setNewTerm(false)} />
+      <DeleteClasses ids={delOpen ? picked : []} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); setSel([]); setPicking(false) }} />
     </div>
   )
 }
 
-function ClassCard({ k, slot, n, i, onOpen }: { k: Klass; slot: ClassSlot; n: number; i: number; onOpen: () => void }) {
+/** 반 여러 개 삭제 확인 (원장만) */
+function DeleteClasses({ ids, onClose, onDone }: { ids: string[]; onClose: () => void; onDone: () => void }) {
+  const db = useStore(s => s)
+  const delMany = useStore(s => s.deleteClasses), toast = useStore(s => s.toast)
+  const [text, setText] = useState('')
+  const [was, setWas] = useState(0)
+  if (ids.length !== was) { setWas(ids.length); setText('') }
+  const ks = db.classes.filter(c => ids.includes(c.id))
+  const students = new Set(db.enrollments.filter(e => ids.includes(e.classId) && !e.end).map(e => e.studentId)).size
+  const makeups = db.makeups.filter(m => ids.includes(m.classId) && (m.status === 'waiting' || m.status === 'planned')).length
+  const need = ks.length >= 3 || students > 0
+  return (
+    <Modal open={ids.length > 0} onClose={onClose} width={460} title={`반 ${ks.length}개 삭제`} sub="삭제하면 되돌릴 수 없어요."
+      footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="danger" disabled={need && text !== '삭제'} onClick={() => {
+        const r = delMany(ids)
+        if (!r) { toast({ title: '원장만 반을 삭제할 수 있어요', tone: 'bad' }); return }
+        toast({ title: `반 ${r.classes}개를 삭제했어요`, body: r.students ? `수강생 ${r.students}명을 반에서 뺐어요${r.keptPaid ? ` · 수납한 청구 ${r.keptPaid}건은 남겼어요` : ''}` : undefined, tone: 'info' })
+        onDone()
+      }}>삭제</Button></>}>
+      <ul className="max-h-[30vh] overflow-y-auto thin-scroll flex flex-col gap-1 text-[14px]">
+        {ks.map(k => <li key={k.id} className="flex justify-between gap-3 px-3 py-1.5 rounded-md bg-sunken/60"><span className="truncate">{k.name}</span><span className="text-muted num shrink-0">{db.enrollments.filter(e => e.classId === k.id && !e.end).length}명 · {slotText(k)}</span></li>)}
+      </ul>
+      <ul className="mt-4 text-[13px] text-muted grid gap-1 list-disc pl-5">
+        <li>수강생 <b className="text-ink">{students}명</b>은 반에서 빠지고, 아직 수납 전인 이번 달 이후 수강료·교재비 청구는 지워져요. 이미 수납한 청구는 남아요.</li>
+        {makeups > 0 && <li>잡혀 있던 보강 {makeups}건도 함께 지워져요.</li>}
+        <li>지난 출결 기록은 학생 기록에 남아요.</li>
+      </ul>
+      {need && <Field label="확인을 위해 '삭제'라고 입력하세요"><Input id="del-confirm" autoFocus value={text} onChange={e => setText(e.target.value)} /></Field>}
+    </Modal>
+  )
+}
+
+function ClassCard({ k, slot, n, i, onOpen, picked }: { k: Klass; slot: ClassSlot; n: number; i: number; onOpen: () => void; picked?: boolean }) {
   const t = useStore(s => s.teachers.find(x => x.id === k.teacherId))
   const price = useStore(s => s.products.find(p => p.id === k.productId)?.price)
   const full = n >= k.capacity
   return (
     <motion.button initial={{ opacity: 0.001, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease, delay: i * 0.03 }} whileHover={{ y: -2 }}
-      onClick={onOpen} className="text-left bg-surface rounded-xl border border-line/80 shadow-card p-3.5 pl-4 relative overflow-hidden hover:border-accent/40 transition-colors">
+      onClick={onOpen} className={cls('text-left bg-surface rounded-xl border shadow-card p-3.5 pl-4 relative overflow-hidden transition-colors', picked ? 'border-bad ring-4 ring-bad/10' : 'border-line/80 hover:border-accent/40')}>
       <span className="absolute left-0 top-0 bottom-0 w-1" style={{ background: t?.color }} />
       <div className="flex items-start justify-between gap-2">
-        <p className="font-semibold truncate">{k.name}</p>
+        <p className="font-semibold truncate flex items-center gap-2">{picked !== undefined && <span className={cls('grid place-items-center w-5 h-5 rounded-md border-2 shrink-0', picked ? 'bg-bad border-bad text-white' : 'border-line')}>{picked && <svg viewBox="0 0 12 12" className="w-3 h-3"><path d="M2.5 6.5l2.2 2.2L9.5 3.8" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span>}{k.name}</p>
         <span className={cls('num text-[12px] font-semibold shrink-0', full ? 'text-bad' : 'text-muted')}>{n}/{k.capacity}명</span>
       </div>
       <p className="text-[13px] text-muted mt-0.5 flex items-center gap-1.5"><TeacherDot color={t?.color ?? '#999'} />{t?.name} · {k.room} · <span className="num">{slot.start}–{slot.end}</span></p>
@@ -214,6 +263,7 @@ function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locke
   const db = useStore(s => s)
   const enrollMany = useStore(s => s.enrollMany), unenroll = useStore(s => s.unenroll), del = useStore(s => s.deleteClass), toast = useStore(s => s.toast), openStudent = useStore(s => s.openStudent)
   const [confirmDel, setConfirmDel] = useState(false), [picking, setPicking] = useState(false)
+  const isOwner = useStore(s => s.session?.role === 'owner')
   const k = db.classes.find(c => c.id === id)
   const members = useMemo(() => k ? db.enrollments.filter(e => e.classId === k.id && !e.end).map(e => db.students.find(s => s.id === e.studentId)!).filter(Boolean) : [], [db, k])
   if (!k) return <Drawer open={false} onClose={onClose} title="">{null}</Drawer>
@@ -241,8 +291,8 @@ function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locke
       title={<div className="flex items-center gap-2.5"><span className="w-3 h-3 rounded-full" style={{ background: t?.color }} /><h2 className="text-[18px] font-semibold">{k.name}</h2></div>}
       sub={<>{t?.name} 선생님 · {k.room} · {slotText(k)} · 주 {weeklyMinutes(k)}분 · <b className={fee ? 'text-ink' : 'text-warn'}>{fee ? `월 ${won(fee.price)}` : '수강료 미설정'}</b>{k.materialIds?.length ? ` · 교재 ${k.materialIds.map(id => db.products.find(p => p.id === id)?.name).filter(Boolean).join(', ')}` : ''}</>}
       footer={!locked && <>
-        {confirmDel ? <><span className="text-[13px] text-bad mr-auto self-center">반과 배정 정보가 삭제돼요.</span><Button variant="ghost" onClick={() => setConfirmDel(false)}>취소</Button><Button variant="danger" onClick={() => { del(k.id); toast({ title: '반을 삭제했어요' }); onClose() }}>삭제</Button></>
-          : <><Button variant="ghost" className="mr-auto text-bad" icon={<Trash2 size={15} />} onClick={() => setConfirmDel(true)}>반 삭제</Button><Button onClick={() => onEdit(k)}>반 정보 수정</Button></>}
+        {confirmDel ? <><span className="text-[13px] text-bad mr-auto self-center">반과 배정 정보가 삭제돼요.</span><Button variant="ghost" onClick={() => setConfirmDel(false)}>취소</Button><Button variant="danger" onClick={() => { del(k.id); toast({ title: '반을 삭제했어요', body: '수강생은 반에서 빠지고 수납 전 청구는 지워졌어요' }); onClose() }}>삭제</Button></>
+          : <>{isOwner ? <Button variant="ghost" className="mr-auto text-bad" icon={<Trash2 size={15} />} onClick={() => setConfirmDel(true)}>반 삭제</Button> : <span className="mr-auto" />}<Button onClick={() => onEdit(k)}>반 정보 수정</Button></>}
       </>}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold">수강생 <span className="num text-muted">{members.length}/{k.capacity}</span> <span className="text-[12px] text-faint font-normal">이름을 누르면 학생 정보</span></h3>

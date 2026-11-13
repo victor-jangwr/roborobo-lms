@@ -447,3 +447,22 @@ create or replace function lms_call_policy() returns json language sql stable se
     'mode', coalesce((select data->>'callUploadMode' from lms_records where branch_id = lms_my_branch() and kind = 'settings' and id = 'main'), 'off'),
     'numbers', coalesce((select data->'callTestNumbers' from lms_records where branch_id = lms_my_branch() and kind = 'settings' and id = 'main'), '[]'::jsonb))
 $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- 삭제 권한 (2026-11 추가): 학생·반 삭제는 원장만. (선생님·태블릿은 읽기·수정만)
+-- ════════════════════════════════════════════════════════════════
+drop policy if exists rc_all on lms_records;
+drop policy if exists rc_sel on lms_records;
+drop policy if exists rc_ins on lms_records;
+drop policy if exists rc_upd on lms_records;
+drop policy if exists rc_del on lms_records;
+create policy rc_sel on lms_records for select
+  using (branch_id = lms_my_branch() and (lms_my_role() <> 'teacher' or kind not in ('payments', 'discountRules', 'studentDiscounts')));
+create policy rc_ins on lms_records for insert
+  with check (branch_id = lms_my_branch() and (lms_my_role() <> 'teacher' or kind not in ('payments', 'discountRules', 'studentDiscounts')));
+create policy rc_upd on lms_records for update
+  using (branch_id = lms_my_branch() and (lms_my_role() <> 'teacher' or kind not in ('payments', 'discountRules', 'studentDiscounts')))
+  with check (branch_id = lms_my_branch() and (lms_my_role() <> 'teacher' or kind not in ('payments', 'discountRules', 'studentDiscounts')));
+create policy rc_del on lms_records for delete
+  using (branch_id = lms_my_branch()
+         and (lms_my_role() = 'owner' or kind not in ('students', 'classes', 'payments', 'discountRules', 'studentDiscounts', 'invoices', 'settings')));

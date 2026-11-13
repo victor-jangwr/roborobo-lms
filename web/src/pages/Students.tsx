@@ -1,6 +1,6 @@
 import { SmsStatusPill } from './ConfigCloud'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowUpCircle, CheckCircle2, Download, FileSpreadsheet, GraduationCap, Layers, Percent, Plus, Search, ToggleLeft, Upload, X } from 'lucide-react'
+import { ArrowUpCircle, CheckCircle2, Download, Trash2, FileSpreadsheet, GraduationCap, Layers, Percent, Plus, Search, ToggleLeft, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Route } from '../components/Shell'
 import { Avatar, Button, Card, Drawer, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, TeacherDot, ease } from '../components/ui'
@@ -105,6 +105,7 @@ export default function Students(_: { go: (r: Route) => void }) {
                 <button key={b.mode} onClick={() => setBulk(b.mode)} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15 transition-colors"><b.icon size={15} />{b.label}</button>
               ))}
               <button onClick={exportXlsx} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15"><Download size={15} />엑셀</button>
+              {db.session?.role === 'owner' && <button onClick={() => setBulk('delete')} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium text-[rgb(var(--bad))] hover:bg-bg/15"><Trash2 size={15} />삭제</button>}
               <button onClick={() => setSel([])} aria-label="선택 해제" className="grid place-items-center w-9 h-9 rounded-lg hover:bg-bg/15"><X size={16} /></button>
             </div>
           </motion.div>
@@ -129,7 +130,7 @@ function Check({ on, mixed, onClick, label }: { on: boolean; mixed?: boolean; on
   )
 }
 
-type BulkMode = 'status' | 'grade' | 'discount' | 'class'
+type BulkMode = 'status' | 'grade' | 'discount' | 'class' | 'delete'
 const BULK: { mode: BulkMode; label: string; icon: typeof Layers }[] = [
   { mode: 'status', label: '상태', icon: ToggleLeft },
   { mode: 'grade', label: '학년·학교', icon: GraduationCap },
@@ -145,6 +146,11 @@ function BulkModal({ mode, ids, onClose, onDone }: { mode: BulkMode | null; ids:
   const [gMode, setGMode] = useState<'promote' | 'set' | 'school'>('promote'), [grade, setGrade] = useState('초4'), [school, setSchool] = useState('')
   const [rule, setRule] = useState(''), [dMode, setDMode] = useState<'add' | 'remove'>('add')
   const [classId, setClassId] = useState('')
+  const [confirmText, setConfirmText] = useState('')
+  const [purge, setPurge] = useState(false)
+  const [m0, setM0] = useState(mode)
+  if (mode !== m0) { setM0(mode); setConfirmText(''); setPurge(false) }
+  const deleteStudents = useStore(s => s.deleteStudents)
   const students = db.students.filter(s => ids.includes(s.id))
   const names = students.slice(0, 4).map(s => s.name).join(', ') + (students.length > 4 ? ` 외 ${students.length - 4}명` : '')
   const term = db.terms.find(t => t.start <= db.clock.date && t.end >= db.clock.date) ?? db.terms[db.terms.length - 1]
@@ -164,6 +170,10 @@ function BulkModal({ mode, ids, onClose, onDone }: { mode: BulkMode | null; ids:
       const r = db.discountRules.find(x => x.id === rule)!
       const n = dMode === 'add' ? setRuleStudents(rule, ids, []) : setRuleStudents(rule, [], ids)
       toast({ title: `${ids.length}명에게 ${r.name}을 ${dMode === 'add' ? '적용했어요' : '뺐어요'}`, body: n ? `수납 전 청구서 ${n}건에 바로 반영했어요` : '다음 청구부터 적용돼요', tone: 'good' })
+    } else if (mode === 'delete') {
+      const r = deleteStudents(ids, { purgePaid: purge })
+      if (!r) { toast({ title: '원장만 학생을 삭제할 수 있어요', tone: 'bad' }); return }
+      toast({ title: `학생 ${r.deleted}명을 삭제했어요`, body: r.archived.length ? `수납 기록이 있는 ${r.archived.length}명(${r.archived.slice(0, 3).join(', ')}${r.archived.length > 3 ? ' 등' : ''})은 결제 기록을 지키려고 퇴원 처리했어요` : undefined, tone: 'info' })
     } else if (mode === 'class' && k) {
       const active = students.filter(s => s.status === 'active').map(s => s.id)
       const r = enrollMany(active, k.id)
@@ -171,11 +181,22 @@ function BulkModal({ mode, ids, onClose, onDone }: { mode: BulkMode | null; ids:
     }
     onDone()
   }
-  const ok = mode === 'status' || (mode === 'grade' && (gMode !== 'school' || school.trim())) || (mode === 'discount' && rule) || (mode === 'class' && k)
+  const paidSet = new Set(db.invoices.filter(i => db.payments.some(p => p.invoiceId === i.id)).map(i => i.studentId))
+  const willArchive = students.filter(s => paidSet.has(s.id)).length
+  const ok = (mode === 'delete' && ((ids.length < 3 && !purge) || confirmText === '삭제')) || mode === 'status' || (mode === 'grade' && (gMode !== 'school' || school.trim())) || (mode === 'discount' && rule) || (mode === 'class' && k)
   const opt = (on: boolean) => cls('h-10 rounded-lg border text-[14px] font-medium transition-colors', on ? 'border-accent bg-accent-soft text-accent' : 'border-line text-muted hover:text-ink')
   return (
-    <Modal open={!!mode} onClose={onClose} width={460} title={{ status: '상태 바꾸기', grade: '학년 · 학교 바꾸기', discount: '할인 넣기 · 빼기', class: '반에 배정하기' }[mode ?? 'status']} sub={`${ids.length}명 · ${names}`}
-      footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="primary" disabled={!ok} onClick={run}>{ids.length}명 적용</Button></>}>
+    <Modal open={!!mode} onClose={onClose} width={460} title={{ status: '상태 바꾸기', grade: '학년 · 학교 바꾸기', discount: '할인 넣기 · 빼기', class: '반에 배정하기', delete: '학생 삭제' }[mode ?? 'status']} sub={`${ids.length}명 · ${names}`}
+      footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant={mode === 'delete' ? 'danger' : 'primary'} disabled={!ok} onClick={run}>{mode === 'delete' ? `${ids.length}명 삭제` : `${ids.length}명 적용`}</Button></>}>
+      {mode === 'delete' && <div className="grid gap-4">
+        <ul className="text-[13px] text-muted grid gap-1.5 list-disc pl-5">
+          <li>학생 정보와 반 배정, 출결·보강·상담 기록, 할인, 수납 전 청구가 <b className="text-bad">모두 지워지고 되돌릴 수 없어요.</b></li>
+          {willArchive > 0 && !purge && <li><b className="text-ink">{willArchive}명</b>은 수납 기록이 있어서 지우지 않고 <b className="text-ink">퇴원 처리</b>해요. 결제·매출 기록을 지키기 위해서예요.</li>}
+          <li>잠시 쉬는 학생이라면 삭제 대신 「상태 → 휴원」을 쓰세요.</li>
+        </ul>
+        {willArchive > 0 && <label className="flex items-start gap-2 text-[13px]"><input type="checkbox" className="mt-0.5" checked={purge} onChange={e => setPurge(e.target.checked)} /><span>수납 기록까지 모두 지우기<span className="block text-[12px] text-muted">예시·테스트 데이터를 정리할 때만 쓰세요. 매출·정산 기록에서도 사라져요.</span></span></label>}
+        {(ids.length >= 3 || purge) && <Field label="확인을 위해 '삭제'라고 입력하세요"><Input id="del-st-confirm" autoFocus value={confirmText} onChange={e => setConfirmText(e.target.value)} /></Field>}
+      </div>}
       {mode === 'status' && <div className="grid gap-4">
         <div className="grid grid-cols-3 gap-2">{(['active', 'paused', 'left'] as const).map(st => <button key={st} type="button" onClick={() => setStatus(st)} className={opt(status === st)}>{STATUS[st][0]}</button>)}</div>
         {status !== 'active' && enrolledNow > 0 && <label className="flex items-start gap-2 text-[14px]"><input type="checkbox" className="mt-1" checked={drop} onChange={e => setDrop(e.target.checked)} />
