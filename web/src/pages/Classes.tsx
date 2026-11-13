@@ -58,7 +58,7 @@ export default function Classes(_: { go: (r: Route) => void }) {
         right={<>
           <Button icon={<Download size={15} />} onClick={exportXlsx}>엑셀</Button>
           {!isTeacher && <Button icon={<CopyPlus size={15} />} onClick={() => setNewTerm(true)}>새 분기 만들기</Button>}
-          {isOwner && term.status !== 'closed' && <Button variant={picking ? 'soft' : undefined} icon={<CheckSquare size={15} />} onClick={() => { setPicking(!picking); setSel([]) }}>{picking ? '선택 끝내기' : '선택'}</Button>}
+          {isOwner && <Button variant={picking ? 'soft' : undefined} className={picking ? undefined : 'text-bad'} icon={picking ? <X size={15} /> : <Trash2 size={15} />} onClick={() => { setPicking(!picking); setSel([]) }}>{picking ? '선택 취소' : '반 선택 삭제'}</Button>}
           {!locked && <Button variant="primary" icon={<Plus size={16} />} onClick={() => setEdit({ name: '', teacherId: db.teachers[0].id, room: '1강의실', capacity: 8, slots: [{ weekday: 1, start: '15:00', end: '16:20' }], productId: db.products.find(p => p.kind === 'tuition')?.id })}>반 만들기</Button>}
         </>} />
 
