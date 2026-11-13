@@ -1,10 +1,12 @@
 // 서버 모드 설정: 계정 연결, 휴대폰 문자 발송
-import { Copy, Loader2, RefreshCw, Send, Smartphone, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { CheckCircle2, Copy, Loader2, RefreshCw, Send, Smartphone, Trash2 } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { pingConfirm } from '../lib/payments'
+import confirmCode from '../../../supabase/functions/lms-pay-confirm/index.ts?raw'
 import { Button, Card, CardHead, Field, Input, Pill, Select } from '../components/ui'
 import { cloud, errText } from '../lib/cloud'
 import { useStore } from '../lib/store'
-import { cls, phoneFmt } from '../lib/util'
+import { cls, phoneFmt, won } from '../lib/util'
 
 interface MemberRow { user_id: string; role: 'owner' | 'teacher' | 'kiosk'; teacher_id: string | null; email: string | null; name: string | null; created_at: string }
 
@@ -167,5 +169,64 @@ export function OrgSetup({ go }: { go?: () => void }) {
         }}>만들기</Button>
       </div>
     </Card>
+  )
+}
+
+/** 온라인 결제 (토스페이먼츠) 연결 */
+export function PaySetup() {
+  const settings = useStore(s => s.settings), save = useStore(s => s.saveSettings), toast = useStore(s => s.toast)
+  const payments = useStore(s => s.payments), invoices = useStore(s => s.invoices), students = useStore(s => s.students)
+  const [key, setKey] = useState(settings.tossClientKey ?? '')
+  const [ping, setPing] = useState<{ ok: boolean; secret?: boolean; message?: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const check = async () => { setChecking(true); setPing(await pingConfirm()); setChecking(false) }
+  useEffect(() => { void check() }, [])
+  const online = payments.filter(p => p.pg).sort((a, b) => (b.pg!.approvedAt).localeCompare(a.pg!.approvedAt)).slice(0, 8)
+  const keyOk = /^(test|live)_ck_/.test(key.trim())
+  const Step = ({ n, done, title, children }: { n: number; done: boolean; title: string; children: ReactNode }) => (
+    <li className="flex gap-3">
+      <span className={cls('grid place-items-center w-7 h-7 rounded-full text-[13px] font-bold shrink-0', done ? 'bg-good text-white' : 'bg-sunken text-muted')}>{done ? <CheckCircle2 size={15} /> : n}</span>
+      <div className="flex-1 min-w-0 pb-4"><p className="font-semibold text-[14px]">{title}</p><div className="text-[13px] text-muted mt-1 leading-relaxed">{children}</div></div>
+    </li>
+  )
+  return (
+    <div className="grid xl:grid-cols-[1fr_380px] gap-4 items-start [&>*]:min-w-0">
+      <Card className="p-5">
+        <h3 className="font-semibold">토스페이먼츠 카드 결제 연결</h3>
+        <p className="text-[13px] text-muted mt-1">테스트 키로 먼저 시험하고, 계약 후 운영 키(live)로 바꾸면 실제 결제가 돼요. 테스트 결제는 돈이 빠져나가지 않아요.</p>
+        <ol className="mt-5">
+          <Step n={1} done={/^(test|live)_ck_/.test(settings.tossClientKey ?? '')} title="클라이언트 키 넣기">
+            <a className="text-accent underline" href="https://developers.tosspayments.com/my/api-keys" target="_blank" rel="noreferrer">토스 개발자센터 → API 키</a>에서 <b>API 개별 연동 키</b>의 <b>클라이언트 키</b>(test_ck_로 시작)를 복사해 넣으세요.
+            <div className="flex gap-2 mt-2"><Input id="toss-ck" value={key} onChange={e => setKey(e.target.value)} placeholder="test_ck_..." className="font-mono text-[12px]" />
+              <Button variant="primary" disabled={!keyOk} onClick={() => { save({ tossClientKey: key.trim() }); toast({ title: '클라이언트 키를 저장했어요', tone: 'good' }) }}>저장</Button></div>
+            {key && !keyOk && <p className="text-bad text-[12px] mt-1">test_ck_ 또는 live_ck_로 시작해야 해요. 시크릿 키(sk)는 여기 넣지 마세요.</p>}
+          </Step>
+          <Step n={2} done={!!ping?.ok} title="승인 서버 만들기 (Supabase Edge Function)">
+            Supabase → <b>Edge Functions</b> → <b>Deploy a new function</b> → <b>Via Editor</b>. 이름을 <code className="px-1 rounded bg-sunken">lms-pay-confirm</code>으로 하고, 아래 버튼으로 코드를 복사해 붙여 넣은 뒤 Deploy.
+            그다음 함수 설정(Details)에서 <b>Enforce JWT verification(Verify JWT)</b>을 꺼 주세요. 학부모는 로그인하지 않고 결제하기 때문이에요.
+            <div className="mt-2"><Button size="sm" icon={<Copy size={13} />} onClick={() => { void navigator.clipboard?.writeText(confirmCode); toast({ title: '승인 서버 코드를 복사했어요', tone: 'good' }) }}>코드 복사</Button></div>
+          </Step>
+          <Step n={3} done={!!ping?.secret} title="시크릿 키 넣기">
+            Supabase → <b>Edge Functions → Secrets</b>에서 이름 <code className="px-1 rounded bg-sunken">TOSS_SECRET_KEY</code>, 값에 토스의 <b>시크릿 키</b>(test_sk_로 시작)를 넣고 저장하세요. 시크릿 키는 LMS 화면이나 문자에 절대 넣지 마세요.
+          </Step>
+          <Step n={4} done={false} title="테스트 결제">
+            결제 → 청구서의 <b>수납 입력</b> → <b>링크 만들기</b> → <b>열어 보기</b>로 결제해 보세요. 결제되면 그 청구서가 자동으로 완납이 돼요.
+          </Step>
+        </ol>
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-sunken">
+          <span className={cls('w-2.5 h-2.5 rounded-full', ping?.ok && ping.secret ? 'bg-good' : ping?.ok ? 'bg-warn' : 'bg-bad')} />
+          <p className="flex-1 text-[13px]">{checking ? '승인 서버 확인 중…' : ping?.ok ? (ping.secret ? '승인 서버 연결됨 · 시크릿 키 있음' : '승인 서버는 있지만 시크릿 키가 없어요 (3단계)') : `승인 서버에 연결되지 않아요 (2단계)${ping?.message ? ` · ${ping.message}` : ''}`}</p>
+          <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={check}>다시 확인</Button>
+        </div>
+      </Card>
+      <Card>
+        <CardHead title="최근 온라인 결제" sub="학부모가 링크로 결제한 내역" />
+        {online.length === 0 ? <p className="px-5 pb-5 text-[13px] text-muted">아직 없어요.</p> : (
+          <ul className="px-5 pb-4 flex flex-col gap-3">{online.map(p => { const inv = invoices.find(i => i.id === p.invoiceId); const st = students.find(s => s.id === inv?.studentId); return (
+            <li key={p.id} className="text-[13px] flex items-center gap-2"><span className="flex-1 min-w-0"><b>{st?.name ?? '-'}</b> <span className="text-muted">{p.paidAt.slice(5)} · {p.note}</span></span><span className="num font-semibold">{won(p.amount)}</span>{p.pg?.receiptUrl && <a href={p.pg.receiptUrl} target="_blank" rel="noreferrer" className="text-accent text-[12px]">영수증</a>}</li>
+          ) })}</ul>
+        )}
+      </Card>
+    </div>
   )
 }

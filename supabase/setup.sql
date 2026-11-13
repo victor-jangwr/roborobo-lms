@@ -364,3 +364,57 @@ $$;
 do $$ begin
   begin alter publication supabase_realtime add table lms_settlements; exception when duplicate_object then null; end;
 end $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- 온라인 결제 (2026-11 추가) — 토스페이먼츠 결제 링크
+-- 학부모는 로그인 없이 링크로 결제하고, 승인은 Edge Function(lms-pay-confirm)이 처리합니다.
+-- ════════════════════════════════════════════════════════════════
+create table if not exists lms_pay_links (
+  token text primary key default replace(gen_random_uuid()::text, '-', ''),
+  branch_id uuid not null references lms_branches(id) on delete cascade,
+  invoice_id text not null,
+  order_id text not null unique,
+  amount bigint not null check (amount > 0),
+  order_name text not null,
+  customer_name text,
+  status text not null default 'ready' check (status in ('ready', 'paid', 'canceled')),
+  payment_key text,
+  method text,
+  receipt_url text,
+  approved_at timestamptz,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '14 days'
+);
+alter table lms_pay_links enable row level security;
+drop policy if exists pl_sel on lms_pay_links;
+create policy pl_sel on lms_pay_links for select using (branch_id = lms_my_branch());
+drop policy if exists pl_upd on lms_pay_links;
+create policy pl_upd on lms_pay_links for update using (branch_id = lms_my_branch() and lms_my_role() = 'owner');
+
+-- 원장: 청구서 결제 링크 만들기 (같은 청구·금액의 링크가 있으면 다시 씀)
+create or replace function lms_create_pay_link(p_invoice_id text, p_amount bigint, p_order_name text, p_customer text) returns json
+language plpgsql security definer set search_path = public as $$
+declare bid uuid := lms_my_branch(); l lms_pay_links;
+begin
+  if bid is null or lms_my_role() <> 'owner' then raise exception '원장 계정만 결제 링크를 만들 수 있어요'; end if;
+  if not exists (select 1 from lms_records where branch_id = bid and kind = 'invoices' and id = p_invoice_id) then raise exception '청구서를 찾을 수 없어요'; end if;
+  select * into l from lms_pay_links where branch_id = bid and invoice_id = p_invoice_id and amount = p_amount and status = 'ready' and expires_at > now() limit 1;
+  if l.token is null then
+    insert into lms_pay_links (branch_id, invoice_id, order_id, amount, order_name, customer_name)
+    values (bid, p_invoice_id, 'lms-' || replace(gen_random_uuid()::text, '-', ''), p_amount, left(p_order_name, 90), p_customer)
+    returning * into l;
+  end if;
+  return json_build_object('token', l.token, 'order_id', l.order_id, 'amount', l.amount, 'expires_at', l.expires_at);
+end $$;
+
+-- 학부모 결제 화면: 링크 정보 (로그인 없이)
+create or replace function lms_pay_info(p_token text) returns json language sql stable security definer set search_path = public as $$
+  select json_build_object('order_id', l.order_id, 'amount', l.amount, 'order_name', l.order_name,
+    'customer_name', case when length(coalesce(l.customer_name, '')) >= 2 then left(l.customer_name, 1) || repeat('*', length(l.customer_name) - 2) || right(l.customer_name, 1) else l.customer_name end,
+    'status', case when l.status = 'ready' and l.expires_at < now() then 'expired' else l.status end,
+    'academy', coalesce((select r.data->>'academyName' from lms_records r where r.branch_id = l.branch_id and r.kind = 'settings' and r.id = 'main'), b.name),
+    'client_key', (select r.data->>'tossClientKey' from lms_records r where r.branch_id = l.branch_id and r.kind = 'settings' and r.id = 'main'),
+    'receipt_url', l.receipt_url, 'approved_at', l.approved_at)
+  from lms_pay_links l join lms_branches b on b.id = l.branch_id where l.token = p_token
+$$;
+grant execute on function lms_pay_info(text) to anon;

@@ -7,15 +7,15 @@ import { useStore } from '../lib/store'
 import type { Teacher } from '../lib/types'
 import { TEACHER_COLORS, cls, phoneFmt } from '../lib/util'
 import { isCloud } from '../lib/cloud'
-import { Accounts, OrgSetup, SmsServer } from './ConfigCloud'
+import { Accounts, OrgSetup, PaySetup, SmsServer } from './ConfigCloud'
 
 export default function Config(_: { go: (r: Route) => void }) {
-  const [tab, setTab] = useState<'teachers' | 'attendance' | 'branch' | 'demo' | 'accounts' | 'phone'>('teachers')
+  const [tab, setTab] = useState<'teachers' | 'attendance' | 'branch' | 'demo' | 'accounts' | 'phone' | 'pay'>('teachers')
   return (
     <div>
       <PageHead title="설정" />
       <Tabs value={tab} onChange={setTab} className="mb-5" items={isCloud
-        ? [{ value: 'teachers', label: '강사' }, { value: 'accounts', label: '계정' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'phone', label: '휴대폰 발송' }, { value: 'branch', label: '지점 · 가맹' }]
+        ? [{ value: 'teachers', label: '강사' }, { value: 'accounts', label: '계정' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'phone', label: '휴대폰 발송' }, { value: 'pay', label: '온라인 결제' }, { value: 'branch', label: '지점 · 가맹' }]
         : [{ value: 'teachers', label: '강사' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'branch', label: '지점 · 가맹' }, { value: 'demo', label: '미리보기 데이터' }]} />
       {tab === 'teachers' && <Teachers />}
       {tab === 'attendance' && <Attendance />}
@@ -23,6 +23,7 @@ export default function Config(_: { go: (r: Route) => void }) {
       {tab === 'demo' && <Demo />}
       {tab === 'accounts' && <Accounts />}
       {tab === 'phone' && <SmsServer />}
+      {tab === 'pay' && <PaySetup />}
     </div>
   )
 }

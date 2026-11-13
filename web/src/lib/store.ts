@@ -78,6 +78,7 @@ interface State extends DB {
   saveTeacher: (t: Partial<Teacher> & { name: string }) => void
   saveSettings: (s: Partial<Settings>) => void
   sendTestSms: () => SmsLog
+  queueSms: (studentId: string, phone: string, text: string) => SmsLog
 
   saveProduct: (p: Partial<Product> & { name: string; price: number; kind: Product['kind'] }) => string
   saveDiscountRule: (r: { id?: string; name: string; type: 'percent' | 'amount'; value: number; scope?: 'tuition' | 'all'; memo?: string }) => number
@@ -338,6 +339,12 @@ export const useStore = create<State>()(persist((set, get) => ({
     ? { teachers: s.teachers.map(x => x.id === t.id ? { ...x, ...t } : x) }
     : { teachers: [...s.teachers, { id: uid('t'), branchId: s.session?.branchId ?? 'br_main', phone: '', color: '#3B6EE6', active: true, ...t } as Teacher] }),
   saveSettings: (v) => set(s => ({ settings: { ...s.settings, ...v } })),
+  queueSms: (studentId, phone, text) => {
+    const s = get()
+    const rec = smsRecord(s.settings, { studentId, phone, kind: 'notice', text, at: `${s.clock.date} ${s.clock.time}` })
+    set({ sms: [rec, ...s.sms] })
+    return rec
+  },
   sendTestSms: () => {
     const s = get()
     const rec = smsRecord({ ...s.settings, smsTestMode: true }, { studentId: '', phone: s.settings.smsTestPhone, kind: 'test', text: `[${s.settings.academyName}] LMS 테스트 문자입니다. ${s.clock.time}`, at: `${s.clock.date} ${s.clock.time}` })

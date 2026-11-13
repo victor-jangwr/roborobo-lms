@@ -1,5 +1,6 @@
 import { MyRoyalty } from './Franchise'
-import { onlinePayReady } from '../lib/payments'
+import { createPayLink, isTestKey, onlinePayReady } from '../lib/payments'
+import { errText, isCloud } from '../lib/cloud'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, Download, Pencil, Plus, Receipt, Sparkles, Tag, Trash2, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -148,12 +149,48 @@ function PayModal({ id, onClose }: { id: string | null; onClose: () => void }) {
           <div className="flex gap-2 flex-wrap">{(Object.keys(METHOD) as PayMethod[]).map(m => <button key={m} onClick={() => setMethod(m)} className={cls('h-9 px-4 rounded-lg border text-[13px] font-medium', method === m ? 'bg-accent text-accent-ink border-accent' : 'border-line hover:bg-sunken')}>{METHOD[m]}</button>)}</div>
         </Field>
         <p className="text-[12px] text-faint">카드 번호나 계좌 번호는 저장하지 않고 결제 수단 종류와 금액만 기록합니다.</p>
-        <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-line">
-          <div className="flex-1"><p className="text-[13px] font-medium">학부모에게 결제 링크 보내기</p><p className="text-[12px] text-muted">카드 결제(PG) 업체를 연결하면 켜져요. 결제되면 수납이 자동으로 기록돼요.</p></div>
-          <Button size="sm" disabled={!onlinePayReady()}>{onlinePayReady() ? '링크 보내기' : '준비 중'}</Button>
-        </div>
+        <PayLinkBox invoiceId={inv.id} amount={remain} />
       </div>
     </Modal>
+  )
+}
+
+/** 학부모 결제 링크: 만들기 → 복사·문자 보내기. 결제되면 수납이 자동 기록 */
+function PayLinkBox({ invoiceId, amount }: { invoiceId: string; amount: number }) {
+  const db = useStore(s => s)
+  const queueSms = useStore(s => s.queueSms), toast = useStore(s => s.toast)
+  const [link, setLink] = useState<{ url: string; expires_at: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const inv = db.invoices.find(i => i.id === invoiceId)!
+  const st = db.students.find(x => x.id === inv.studentId)!
+  const ready = onlinePayReady(db.settings)
+  if (!ready) return (
+    <div className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-line">
+      <div className="flex-1"><p className="text-[13px] font-medium">학부모에게 결제 링크 보내기</p><p className="text-[12px] text-muted">{isCloud ? '설정 → 온라인 결제에서 토스페이먼츠 키를 넣으면 켜져요.' : '서버에 연결한 LMS에서 쓸 수 있어요.'}</p></div>
+      <Button size="sm" disabled>준비 중</Button>
+    </div>
+  )
+  const orderName = `${db.settings.academyName} ${fmtMonth(inv.month)} ${CATEGORY_LABEL[invoiceCategory(db, inv)]}`
+  const make = async () => {
+    setBusy(true)
+    try { setLink(await createPayLink(inv.id, amount, orderName, st.name)) } catch (e) { toast({ title: '결제 링크를 만들지 못했어요', body: errText(e), tone: 'bad' }) } finally { setBusy(false) }
+  }
+  return (
+    <div className="p-3 rounded-lg border border-accent/30 bg-accent-soft/30">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0"><p className="text-[13px] font-medium">학부모 카드 결제 링크 {isTestKey(db.settings.tossClientKey) && <span className="text-[11px] text-warn font-semibold">테스트</span>}</p><p className="text-[12px] text-muted">결제되면 수납이 자동으로 기록돼요 · {won(amount)}</p></div>
+        {!link && <Button size="sm" variant="primary" disabled={busy || amount <= 0} onClick={make}>{busy ? '만드는 중…' : '링크 만들기'}</Button>}
+      </div>
+      {link && <div className="mt-3 grid gap-2">
+        <Input id="pay-link" readOnly value={link.url} onFocus={e => e.target.select()} className="text-[12px] font-mono" />
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => { void navigator.clipboard?.writeText(link.url); toast({ title: '결제 링크를 복사했어요', tone: 'good' }) }}>복사</Button>
+          <Button size="sm" onClick={() => window.open(link.url, '_blank')}>열어 보기</Button>
+          <Button size="sm" variant="primary" onClick={() => { const r = queueSms(st.id, st.parentPhone, `[${db.settings.academyName}] ${st.name} 학생 ${fmtMonth(inv.month)} ${CATEGORY_LABEL[invoiceCategory(db, inv)]} ${won(amount)} 결제 안내입니다. 아래 링크에서 카드로 결제하실 수 있어요.\n${link.url}`); toast({ title: r.status === 'skipped' ? '문자를 보내지 못했어요' : '결제 안내 문자를 대기열에 넣었어요', body: r.error ?? (db.settings.smsTestMode ? '테스트 모드라 테스트 번호로 가요' : `${st.parentName ?? ''} 학부모님께 발송돼요`), tone: r.status === 'skipped' ? 'warn' : 'good' }) }}>문자로 보내기</Button>
+        </div>
+        <p className="text-[11px] text-faint">링크는 {link.expires_at.slice(0, 10)}까지 쓸 수 있어요.</p>
+      </div>}
+    </div>
   )
 }
 

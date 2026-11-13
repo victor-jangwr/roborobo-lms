@@ -43,6 +43,14 @@
 
 계산식: `초과분 매출 = 그 달 순매출 × (유료 수강생 − 기준 학생 수) ÷ 유료 수강생`, `로열티 = 고정 + 초과분 매출 × %` (한도 적용 후 추가 항목·부가세를 더함).
 
+## 온라인 결제 (토스페이먼츠)
+
+1. Supabase SQL Editor에서 `supabase/setup.sql`을 다시 실행합니다 (결제 링크 표 추가).
+2. LMS **설정 → 온라인 결제**에 토스 개발자센터의 **클라이언트 키**(`test_ck_…`)를 넣습니다.
+3. Supabase **Edge Functions → Deploy a new function → Via Editor**, 이름 `lms-pay-confirm`, 코드는 `supabase/functions/lms-pay-confirm/index.ts` (설정 화면의 "코드 복사" 버튼). 배포 후 **Verify JWT를 끕니다** (학부모는 로그인하지 않음).
+4. **Edge Functions → Secrets**에 `TOSS_SECRET_KEY` = 시크릿 키(`test_sk_…`).
+5. 결제 → 수납 입력 → **링크 만들기** → 학부모가 링크에서 카드 결제 → 승인 서버가 토스 승인 후 수납을 자동 기록합니다.
+
 ## 동작 방식
 - 출결이 찍히면 문자 기록이 `lms_records`에 저장되고, DB 트리거가 `lms_sms_outbox` 대기열에 넣습니다.
 - 휴대폰 앱이 5초마다 `lms_claim_sms`로 가져가 발송하고 `lms_finish_sms`로 결과를 알립니다. 결과는 LMS 화면에 실시간으로 표시됩니다.

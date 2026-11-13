@@ -118,6 +118,7 @@ export interface Settings {
   academyName: string
   autoBillOnEnroll: boolean     // 반 배정 시 수강료 자동 청구
   smsTestMode: boolean          // 켜면 모든 문자가 테스트 번호로만 감
+  tossClientKey?: string        // 토스페이먼츠 클라이언트 키 (공개 키, test_ck_… / live_ck_…)
   smsTestPhone: string
 }
 
