@@ -327,6 +327,7 @@ export function StudentDrawer({ id, onClose, onEdit }: { id: string | null; onCl
               <div className="flex justify-between items-center"><p className="font-semibold">{fmtMonth(i.month)} <span className="text-[12px] font-medium text-muted">· {CATEGORY_LABEL[invoiceCategory(db, i)]}</span></p><Pill tone={st === 'paid' ? 'good' : st === 'partial' ? 'late' : 'bad'}>{st === 'paid' ? '완납' : st === 'partial' ? '부분납' : '미납'}</Pill></div>
               {i.items.map((it, j) => <p key={j} className="text-[13px] text-muted mt-1 flex justify-between gap-2"><span>{it.label}{it.discounts.map(d => ` · ${d.label}`).join('')}</span><span className="num">{won(it.price - it.discounts.reduce((a, d) => a + d.amount, 0))}</span></p>)}
               <p className="text-[13px] mt-2 flex justify-between border-t border-line/70 pt-2"><span className="text-muted">청구 {won(invoiceTotal(i))}</span><span className="num font-medium">수납 {won(paidOf(db, i))}</span></p>
+              {db.payments.filter(p => p.invoiceId === i.id).map(p => <p key={p.id} className="text-[12px] text-muted flex justify-between"><span>{p.paidAt.slice(5).replace('-', '/')} · {p.pg ? '온라인 ' : ''}{{ card: '카드', transfer: '계좌이체', cash: '현금', etc: '기타' }[p.method]}{p.note ? ` · ${p.note}` : ''}</span><span className="num">{won(p.amount)}</span></p>)}
             </li>) })}
           {!invs.length && <p className="text-muted text-[13px]">청구 내역이 없어요.</p>}
         </ul>

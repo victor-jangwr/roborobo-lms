@@ -1,7 +1,7 @@
 // 학부모 결제 화면 (로그인 없이 링크로 열림): 청구 내용 확인 → 토스 결제창 → 승인 → 영수증
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { motion } from 'framer-motion'
-import { AlertCircle, CheckCircle2, CreditCard, Loader2, Receipt, ShieldCheck } from 'lucide-react'
+import { AlertCircle, CheckCircle2, CreditCard, Landmark, Loader2, Receipt, ShieldCheck } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { BrandMark } from '../components/Art'
 import { Button, ease } from '../components/ui'
@@ -65,20 +65,20 @@ export default function PayPage() {
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const pay = async (info: Info) => {
+  const pay = async (info: Info, how: 'CARD' | 'TRANSFER' = 'CARD') => {
     if (!info.client_key) { setV({ k: 'failed', info, text: '학원에서 아직 온라인 결제를 설정하지 않았어요.' }); return }
     setBusy(true)
     try {
       const T = await loadToss()
       const payment = T(info.client_key).payment({ customerKey: (T as unknown as { ANONYMOUS: string }).ANONYMOUS ?? 'ANONYMOUS' })
       await payment.requestPayment({
-        method: 'CARD',
+        method: how,
         amount: { currency: 'KRW', value: info.amount },
         orderId: info.order_id,
         orderName: info.order_name,
         successUrl: `${base}&done=1`,
         failUrl: `${base}&fail=1`,
-        card: { useEscrow: false, flowMode: 'DEFAULT', useCardPoint: false, useAppCardOnly: false },
+        ...(how === 'CARD' ? { card: { useEscrow: false, flowMode: 'DEFAULT', useCardPoint: false, useAppCardOnly: false } } : { transfer: { useEscrow: false } }),
       })
     } catch (e) {
       const m = (e as { message?: string; code?: string })
@@ -104,7 +104,11 @@ export default function PayPage() {
               <span className="text-[28px] font-bold num tracking-tight">{won(info.amount)}</span>
             </div>
           </>}
-          {v.k === 'ready' && <Button variant="primary" size="lg" className="w-full mt-5" disabled={busy} icon={busy ? <Loader2 size={17} className="animate-spin" /> : <CreditCard size={17} />} onClick={() => pay(v.info)}>{busy ? '결제창 여는 중…' : '카드로 결제하기'}</Button>}
+          {v.k === 'ready' && <div className="mt-5 grid gap-2">
+            <Button variant="primary" size="lg" className="w-full" disabled={busy} icon={busy ? <Loader2 size={17} className="animate-spin" /> : <CreditCard size={17} />} onClick={() => pay(v.info, 'CARD')}>{busy ? '결제창 여는 중…' : '카드 · 간편결제'}</Button>
+            <Button size="lg" className="w-full" disabled={busy} icon={<Landmark size={17} />} onClick={() => pay(v.info, 'TRANSFER')}>계좌이체</Button>
+            <p className="text-[12px] text-faint text-center">카드 · 간편결제에서 카카오페이, 네이버페이, 토스페이도 쓸 수 있어요.</p>
+          </div>}
           {v.k === 'confirming' && <p className="flex items-center gap-2 text-muted mt-5 justify-center"><Loader2 className="animate-spin" size={18} />결제를 확인하고 있어요…</p>}
           {v.k === 'done' && (
             <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="mt-5 rounded-xl bg-good/10 p-4 text-center">
@@ -117,7 +121,7 @@ export default function PayPage() {
           {v.k === 'failed' && (
             <div className="mt-5">
               <p className="flex items-start gap-2 text-bad text-[14px]"><AlertCircle size={17} className="mt-0.5 shrink-0" />{v.text}</p>
-              {v.info.status === 'ready' && <Button variant="primary" size="lg" className="w-full mt-4" icon={<CreditCard size={17} />} onClick={() => { setV({ k: 'ready', info: v.info }); void pay(v.info) }}>다시 결제하기</Button>}
+              {v.info.status === 'ready' && <Button variant="primary" size="lg" className="w-full mt-4" icon={<CreditCard size={17} />} onClick={() => setV({ k: 'ready', info: v.info })}>다시 결제하기</Button>}
             </div>
           )}
         </div>

@@ -45,7 +45,7 @@ export function unpaidInvoices(s: S, month?: string) {
   return s.invoices.filter(i => (!month || i.month === month) && remainOf(s, i) > 0 && s.students.some(st => st.id === i.studentId && st.status !== 'left'))
 }
 
-export const DEFAULT_PAY_TEXT = '[{학원}] {학생} 학생 {월} 결제 안내입니다.\n{내역}\n링크를 누르면 카드로 바로 결제하실 수 있어요.'
+export const DEFAULT_PAY_TEXT = '[{학원}] {학생} 학생 {월} 결제 안내입니다.\n{내역}\n링크를 누르면 카드·계좌이체로 바로 결제하실 수 있어요.'
 
 /** 문자 한 통 내용 (미리보기·발송 공용) */
 export function payText(s: S, studentId: string, invs: Invoice[], urls: Record<string, string>, template = s.settings.smsPayLink || DEFAULT_PAY_TEXT) {

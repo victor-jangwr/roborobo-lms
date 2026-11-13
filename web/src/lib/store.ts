@@ -89,7 +89,8 @@ interface State extends DB {
   toggleStudentDiscount: (studentId: string, ruleId: string) => void
   generateInvoices: (month: string) => number
   billSpecial: (productId: string, studentIds: string[], extra?: { label: string; amount: number }) => number
-  addPayment: (invoiceId: string, amount: number, method: PayMethod) => void
+  addPayment: (invoiceId: string, amount: number, method: PayMethod, note?: string, paidAt?: string) => void
+  removePayment: (id: string) => void
   deleteInvoice: (id: string) => void
 
   saveConsult: (c: Partial<Consult> & { studentId: string; summary: string }) => string
@@ -419,7 +420,8 @@ export const useStore = create<State>()(persist((set, get) => ({
     set({ invoices: [...s.invoices, ...invs] })
     return invs.length
   },
-  addPayment: (invoiceId, amount, method) => set(s => ({ payments: [...s.payments, { id: uid('pay'), invoiceId, amount, method, paidAt: s.clock.date }] })),
+  addPayment: (invoiceId, amount, method, note, paidAt) => set(s => ({ payments: [...s.payments, { id: uid('pay'), invoiceId, amount, method, paidAt: paidAt || s.clock.date, ...(note ? { note } : {}) }] })),
+  removePayment: (id) => set(s => ({ payments: s.payments.filter(p => p.id !== id) })),
   deleteInvoice: (id) => set(s => ({ invoices: s.invoices.filter(i => i.id !== id), payments: s.payments.filter(p => p.invoiceId !== id) })),
 
   saveConsult: (c) => {

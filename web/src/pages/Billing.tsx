@@ -59,7 +59,7 @@ function Invoices() {
   const shift = (n: number) => { const d = parseYmd(month + '-01'); d.setMonth(d.getMonth() + n); setMonth(ymd(d).slice(0, 7)) }
 
   const exportX = async () => {
-    const rows = invs.flatMap(i => { const s = db.students.find(x => x.id === i.studentId)!; return i.items.map(it => ({ 월: i.month, 학생: s.name, 항목: it.label, 정가: it.price, 할인: it.discounts.map(d => `${d.label} -${d.amount}`).join(', '), 청구액: itemTotal(it), 학생수납합계: paidOf(db, i), 상태: PS[payState(db, i)][0] })) })
+    const rows = invs.flatMap(i => { const s = db.students.find(x => x.id === i.studentId)!; return i.items.map(it => ({ 월: i.month, 학생: s.name, 항목: it.label, 정가: it.price, 할인: it.discounts.map(d => `${d.label} -${d.amount}`).join(', '), 청구액: itemTotal(it), 학생수납합계: paidOf(db, i), 결제수단: db.payments.filter(p => p.invoiceId === i.id).map(p => `${p.pg ? '온라인 ' : ''}${METHOD[p.method]} ${p.amount}`).join(', '), 상태: PS[payState(db, i)][0] })) })
     if (await saveFile(`청구수납_${month}.xlsx`, workbook([{ name: '청구 수납', rows }])) === 'saved') toast({ title: '청구·수납 내역을 엑셀로 저장했어요', tone: 'good' })
   }
 
@@ -104,9 +104,9 @@ function Invoices() {
                       <td className="px-4 py-3 num text-muted">{price.toLocaleString()}</td>
                       <td className="px-4 py-3 num text-accent">{price - t > 0 ? `-${(price - t).toLocaleString()}` : '-'}</td>
                       <td className="px-4 py-3 num font-semibold">{t.toLocaleString()}</td>
-                      <td className="px-4 py-3 num">{paidOf(db, i).toLocaleString()}</td>
+                      <td className="px-4 py-3"><PaidList invoiceId={i.id} onClick={() => setPayId(i.id)} /></td>
                       <td className="px-4 py-3"><Pill tone={PS[st][1]}>{PS[st][0]}</Pill>{i.linkSentAt && st !== 'paid' && <p className="text-[11px] text-faint mt-1 whitespace-nowrap">안내 {i.linkSentAt.slice(5, 10).replace('-', '/')}{(i.linkSentCount ?? 0) > 1 ? ` · ${i.linkSentCount}회` : ''}</p>}</td>
-                      <td className="px-4 py-3 text-right">{st !== 'paid' && <Button size="sm" variant="soft" onClick={() => setPayId(i.id)}>수납 입력</Button>}</td>
+                      <td className="px-4 py-3 text-right">{st !== 'paid' ? <Button size="sm" variant="soft" onClick={() => setPayId(i.id)}>수납 입력</Button> : <Button size="sm" variant="ghost" onClick={() => setPayId(i.id)}>내역</Button>}</td>
                     </tr>
                   )
                 })}
@@ -150,26 +150,69 @@ function Invoices() {
   )
 }
 
+/** 청구서의 수납 내역: 결제 수단별 금액 */
+function PaidList({ invoiceId, onClick }: { invoiceId: string; onClick: () => void }) {
+  const pays = useStore(s => s.payments).filter(p => p.invoiceId === invoiceId)
+  if (!pays.length) return <span className="num text-muted">0</span>
+  return (
+    <button onClick={onClick} className="text-left hover:opacity-80">
+      {pays.map(p => <span key={p.id} className="block text-[13px] num whitespace-nowrap"><span className={cls('text-[11px] font-semibold mr-1', p.pg ? 'text-accent' : 'text-muted')}>{p.pg ? '온라인' : ''}{METHOD[p.method]}</span>{p.amount.toLocaleString()}</span>)}
+    </button>
+  )
+}
+
 function PayModal({ id, onClose }: { id: string | null; onClose: () => void }) {
   const db = useStore(s => s)
-  const add = useStore(s => s.addPayment), toast = useStore(s => s.toast)
+  const add = useStore(s => s.addPayment), remove = useStore(s => s.removePayment), toast = useStore(s => s.toast)
   const inv = db.invoices.find(i => i.id === id)
   const remain = inv ? invoiceTotal(inv) - paidOf(db, inv) : 0
-  const [amount, setAmount] = useState(0), [method, setMethod] = useState<PayMethod>('card')
+  const [amount, setAmount] = useState(0), [method, setMethod] = useState<PayMethod>('card'), [note, setNote] = useState(''), [date, setDate] = useState('')
+  const [mode, setMode] = useState<'record' | 'link'>('record')
   const [key, setKey] = useState<unknown>(null)
-  if (id !== key) { setKey(id); setAmount(remain) }
+  if (id !== key) { setKey(id); setAmount(remain); setNote(''); setDate(db.clock.date); setMode(remain > 0 && onlinePayReady(db.settings) ? 'link' : 'record') }
   if (!inv) return <Modal open={false} onClose={onClose} title="">{null}</Modal>
   const s = db.students.find(x => x.id === inv.studentId)!
+  const pays = db.payments.filter(p => p.invoiceId === inv.id)
+  const save = () => {
+    add(inv.id, amount, method, note.trim() || undefined, date)
+    toast({ title: `${s.name} ${METHOD[method]} ${won(amount)} 수납`, body: amount >= remain ? '완납 처리됐어요' : `${won(remain - amount)} 남았어요`, tone: 'good' })
+    onClose()
+  }
   return (
-    <Modal open={!!id} onClose={onClose} width={440} title={`${CATEGORY_LABEL[invoiceCategory(db, inv)]} 수납 입력`} sub={<>{s.name} · {fmtMonth(inv.month)} · 남은 금액 <b className="text-ink num">{won(remain)}</b></>}
-      footer={<><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="primary" disabled={amount <= 0} onClick={() => { add(inv.id, amount, method); toast({ title: `${s.name} ${won(amount)} 수납`, body: amount >= remain ? '완납 처리됐어요' : `${won(remain - amount)} 남았어요`, tone: 'good' }); onClose() }}>수납 저장</Button></>}>
+    <Modal open={!!id} onClose={onClose} width={480} title={`${CATEGORY_LABEL[invoiceCategory(db, inv)]} 수납`} sub={<>{s.name} · {fmtMonth(inv.month)} · 청구 {won(invoiceTotal(inv))} · 남은 금액 <b className={cls('num', remain > 0 ? 'text-bad' : 'text-good')}>{won(remain)}</b></>}
+      footer={mode === 'record' && remain > 0 ? <><Button variant="ghost" onClick={onClose}>취소</Button><Button variant="primary" disabled={amount <= 0} onClick={save}>{METHOD[method]} {won(amount)} 수납 저장</Button></> : <Button variant="ghost" onClick={onClose}>닫기</Button>}>
       <div className="grid gap-4">
-        <Field label="받은 금액"><Input id="pay-amt" type="number" step={1000} value={amount} onChange={e => setAmount(Number(e.target.value))} className="num text-[16px] font-semibold" /></Field>
-        <Field label="결제 수단">
-          <div className="flex gap-2 flex-wrap">{(Object.keys(METHOD) as PayMethod[]).map(m => <button key={m} onClick={() => setMethod(m)} className={cls('h-9 px-4 rounded-lg border text-[13px] font-medium', method === m ? 'bg-accent text-accent-ink border-accent' : 'border-line hover:bg-sunken')}>{METHOD[m]}</button>)}</div>
-        </Field>
-        <p className="text-[12px] text-faint">카드 번호나 계좌 번호는 저장하지 않고 결제 수단 종류와 금액만 기록합니다.</p>
-        <PayLinkBox invoiceId={inv.id} amount={remain} />
+        {pays.length > 0 && <div>
+          <p className="text-[13px] font-semibold mb-1.5">수납 내역</p>
+          <ul className="rounded-lg border border-line divide-y divide-line/70">
+            {pays.map(p => <li key={p.id} className="flex items-center gap-3 px-3 py-2 text-[13px]">
+              <span className={cls('text-[11px] font-semibold px-1.5 py-0.5 rounded', p.pg ? 'bg-accent-soft text-accent' : 'bg-sunken text-muted')}>{p.pg ? '온라인 ' : ''}{METHOD[p.method]}</span>
+              <span className="text-muted num">{p.paidAt.slice(5).replace('-', '/')}</span>
+              <span className="flex-1 truncate text-faint">{p.note}</span>
+              <span className="num font-semibold">{won(p.amount)}</span>
+              {p.pg?.receiptUrl ? <a href={p.pg.receiptUrl} target="_blank" rel="noreferrer" className="text-accent text-[12px]">영수증</a>
+                : !p.pg && <button aria-label="수납 기록 삭제" className="text-faint hover:text-bad p-1" onClick={() => { remove(p.id); toast({ title: '수납 기록을 지웠어요', body: `${METHOD[p.method]} ${won(p.amount)}`, tone: 'info' }) }}><Trash2 size={14} /></button>}
+            </li>)}
+          </ul>
+          {pays.some(p => p.pg) && <p className="text-[11px] text-faint mt-1">온라인 결제 취소·환불은 토스페이먼츠 상점관리자에서 해 주세요.</p>}
+        </div>}
+        {remain > 0 && <>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setMode('link')} className={cls('rounded-lg border px-3 py-2.5 text-left', mode === 'link' ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent/40')}><span className={cls('block text-[14px] font-semibold', mode === 'link' && 'text-accent')}>결제 링크 보내기</span><span className="block text-[12px] text-muted">학부모가 카드·계좌이체로 직접 결제</span></button>
+            <button onClick={() => setMode('record')} className={cls('rounded-lg border px-3 py-2.5 text-left', mode === 'record' ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent/40')}><span className={cls('block text-[14px] font-semibold', mode === 'record' && 'text-accent')}>받은 돈 기록하기</span><span className="block text-[12px] text-muted">단말기·이체·현금으로 이미 받음</span></button>
+          </div>
+          {mode === 'link' ? <PayLinkBox invoiceId={inv.id} amount={remain} /> : <>
+            <Field label="어떻게 받았나요?" hint="수납 내역·엑셀에 결제 수단이 표시돼요">
+              <div className="grid grid-cols-4 gap-2">{(Object.keys(METHOD) as PayMethod[]).map(m => <button key={m} onClick={() => setMethod(m)} className={cls('h-10 rounded-lg border text-[14px] font-medium transition-colors', method === m ? 'bg-accent text-accent-ink border-accent' : 'border-line hover:bg-sunken')}>{METHOD[m]}</button>)}</div>
+            </Field>
+            <div className="grid grid-cols-[1fr_150px] gap-3">
+              <Field label="받은 금액"><Input id="pay-amt" type="number" step={1000} value={amount} onChange={e => setAmount(Number(e.target.value))} className="num text-[16px] font-semibold" /></Field>
+              <Field label="받은 날"><Input id="pay-date" type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
+            </div>
+            <Field label="메모" hint="선택 · 입금자명, 카드사 등"><Input id="pay-note" value={note} onChange={e => setNote(e.target.value)} placeholder={method === 'transfer' ? '예: 입금자 김OO' : method === 'card' ? '예: 신한카드 단말기' : ''} /></Field>
+            {amount > remain && <p className="text-[12px] text-warn">남은 금액보다 {won(amount - remain)} 많아요.</p>}
+          </>}
+        </>}
       </div>
     </Modal>
   )
@@ -271,7 +314,7 @@ function PayLinkBox({ invoiceId, amount }: { invoiceId: string; amount: number }
   return (
     <div className="p-3 rounded-lg border border-accent/30 bg-accent-soft/30">
       <div className="flex items-center gap-3">
-        <div className="flex-1 min-w-0"><p className="text-[13px] font-medium">학부모 카드 결제 링크 {isTestKey(db.settings.tossClientKey) && <span className="text-[11px] text-warn font-semibold">테스트</span>}</p><p className="text-[12px] text-muted">결제되면 수납이 자동으로 기록돼요 · {won(amount)}</p></div>
+        <div className="flex-1 min-w-0"><p className="text-[13px] font-medium">학부모 결제 링크 {isTestKey(db.settings.tossClientKey) && <span className="text-[11px] text-warn font-semibold">테스트</span>}</p><p className="text-[12px] text-muted">결제되면 수납이 자동으로 기록돼요 · {won(amount)}</p></div>
         {!link && <Button size="sm" variant="primary" disabled={busy || amount <= 0} onClick={make}>{busy ? '만드는 중…' : '링크 만들기'}</Button>}
       </div>
       {link && <div className="mt-3 grid gap-2">
