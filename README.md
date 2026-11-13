@@ -52,6 +52,17 @@
 5. 결제 → 수납 입력 → **링크 만들기** → 학부모가 링크에서 카드 결제 → 승인 서버가 토스 승인 후 수납을 자동 기록합니다.
 6. 여러 명은 결제 → **결제 안내 보내기**: 미납 학부모별로 문자 한 통(수강료·교재비 링크 함께)을 보냅니다. 일괄 청구 창에서 "결제 안내 문자도 바로 보내기"를 켜 두면 청구와 동시에 발송되고, **미납 자동 재알림**을 켜면 납부일이 지난 미납에 N일마다 다시 보냅니다.
 
+## 상담 통화 녹음 정리 (Gemini)
+
+1. `supabase/setup.sql` 다시 실행 (녹음 보관함 `call-recordings`, 정책 함수 추가).
+2. Supabase Edge Function `lms-call-summarize` 배포 (코드: `supabase/functions/lms-call-summarize/index.ts`, LMS 설정 → 상담 녹음의 "코드 복사"). **Verify JWT는 켠 채로** 둡니다.
+3. Edge Functions → Secrets에 `GEMINI_API_KEY` (Google AI Studio 키). 선택: `GEMINI_MODEL` (기본 `gemini-3.5-flash-lite`).
+4. LMS 설정 → 상담 녹음: **테스트**로 두고 시험할 번호를 등록 (그 번호가 학생의 학부모 번호여야 함).
+5. 갤럭시 전화 앱에서 통화 자동 녹음을 켜고, 휴대폰 앱 최신 버전에서 권한 허용 → "상담 통화 녹음 정리" 켜기.
+6. 통화가 끝나면 1분 안에 상담 → 검토 대기에 초안이 들어오고, 서버의 녹음 파일은 정리 직후 삭제됩니다.
+
+무료 Gemini 키는 내용이 Google 제품 개선에 쓰일 수 있으므로 실제 학부모 통화("전체" 모드)는 결제를 등록한 키로만 사용하세요.
+
 ## 동작 방식
 - 출결이 찍히면 문자 기록이 `lms_records`에 저장되고, DB 트리거가 `lms_sms_outbox` 대기열에 넣습니다.
 - 휴대폰 앱이 5초마다 `lms_claim_sms`로 가져가 발송하고 `lms_finish_sms`로 결과를 알립니다. 결과는 LMS 화면에 실시간으로 표시됩니다.

@@ -27,6 +27,9 @@ class Api(context: Context) {
     var enabled: Boolean
         get() = prefs.getBoolean("enabled", false)
         set(v) = prefs.edit().putBoolean("enabled", v).apply()
+    var callUpload: Boolean
+        get() = prefs.getBoolean("callUpload", false)
+        set(v) = prefs.edit().putBoolean("callUpload", v).apply()
     var callerId: Boolean
         get() = prefs.getBoolean("callerId", true)
         set(v) = prefs.edit().putBoolean("callerId", v).apply()
@@ -119,6 +122,38 @@ class Api(context: Context) {
 
     fun finish(id: String, ok: Boolean, error: String?) {
         rpc("lms_finish_sms", JSONObject().put("p_id", id).put("p_ok", ok).put("p_error", error ?: JSONObject.NULL))
+    }
+
+    /** 녹음 올리기 정책: mode(off/test/all), numbers(테스트 번호), branch_id */
+    fun callPolicy(): JSONObject = JSONObject(rpc("lms_call_policy"))
+
+    /** 녹음 파일을 Supabase Storage(call-recordings)에 올림 */
+    fun upload(path: String, bytes: ByteArray, mime: String) {
+        ensureToken()
+        val c = URL("$url/storage/v1/object/call-recordings/$path").openConnection() as HttpURLConnection
+        c.requestMethod = "POST"
+        c.connectTimeout = 20000
+        c.readTimeout = 120000
+        c.doOutput = true
+        c.setRequestProperty("apikey", key)
+        c.setRequestProperty("Authorization", "Bearer $access")
+        c.setRequestProperty("Content-Type", mime)
+        c.setFixedLengthStreamingMode(bytes.size)
+        c.outputStream.use { it.write(bytes) }
+        val code = c.responseCode
+        val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+        c.disconnect()
+        if (code !in 200..299) throw HttpError(code, readableError(text, code))
+    }
+
+    /** Edge Function 호출 (원장 로그인 토큰으로) */
+    fun function(name: String, body: JSONObject): JSONObject {
+        ensureToken()
+        val text = try { http("POST", "/functions/v1/$name", body.toString(), true) } catch (e: HttpError) {
+            if (e.code != 401) throw e
+            expiresAt = 0; ensureToken(); http("POST", "/functions/v1/$name", body.toString(), true)
+        }
+        return try { JSONObject(text) } catch (e: Exception) { JSONObject().put("ok", false).put("message", text.take(200)) }
     }
 
     fun lookupCaller(phone: String): JSONArray =

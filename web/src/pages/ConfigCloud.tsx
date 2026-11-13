@@ -3,7 +3,8 @@ import { CheckCircle2, Copy, Loader2, RefreshCw, Send, Smartphone, Trash2 } from
 import { useEffect, useState, type ReactNode } from 'react'
 import { pingConfirm } from '../lib/payments'
 import confirmCode from '../../../supabase/functions/lms-pay-confirm/index.ts?raw'
-import { Button, Card, CardHead, Field, Input, Pill, Select } from '../components/ui'
+import callCode from '../../../supabase/functions/lms-call-summarize/index.ts?raw'
+import { Button, Card, CardHead, Field, Input, Modal, Pill, Select } from '../components/ui'
 import { cloud, errText } from '../lib/cloud'
 import { useStore } from '../lib/store'
 import { cls, phoneFmt, won } from '../lib/util'
@@ -227,6 +228,98 @@ export function PaySetup() {
           ) })}</ul>
         )}
       </Card>
+    </div>
+  )
+}
+
+/** 상담 통화 녹음 → Gemini 정리 */
+export function CallSetup() {
+  const settings = useStore(s => s.settings), save = useStore(s => s.saveSettings), toast = useStore(s => s.toast)
+  const consults = useStore(s => s.consults), students = useStore(s => s.students)
+  const mode = settings.callUploadMode ?? 'off'
+  const nums = settings.callTestNumbers ?? []
+  const [num, setNum] = useState('')
+  const [ping, setPing] = useState<{ ok: boolean; key?: boolean; model?: string; message?: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [confirmAll, setConfirmAll] = useState(false)
+  const check = async () => {
+    setChecking(true)
+    try { const { data, error } = await cloud!.functions.invoke('lms-call-summarize', { body: { ping: true } }); setPing(error ? { ok: false, message: error.message } : data) } catch (e) { setPing({ ok: false, message: (e as Error).message }) }
+    setChecking(false)
+  }
+  useEffect(() => { void check() }, [])
+  const recent = consults.filter(c => c.source === 'call' && c.id.startsWith('call_')).slice(0, 6)
+  const setMode = (m: 'off' | 'test' | 'all') => { save({ callUploadMode: m }); toast({ title: { off: '녹음 올리기를 껐어요', test: '테스트 번호와의 통화만 올려요', all: '모든 학부모 통화를 정리해요' }[m], tone: m === 'all' ? 'warn' : 'good' }) }
+  const studentOf = (p: string) => students.find(s => s.parentPhone.replace(/\D/g, '') === p.replace(/\D/g, ''))
+  const Step = ({ n, done, title, children }: { n: number; done: boolean; title: string; children: ReactNode }) => (
+    <li className="flex gap-3">
+      <span className={cls('grid place-items-center w-7 h-7 rounded-full text-[13px] font-bold shrink-0', done ? 'bg-good text-white' : 'bg-sunken text-muted')}>{done ? <CheckCircle2 size={15} /> : n}</span>
+      <div className="flex-1 min-w-0 pb-4"><p className="font-semibold text-[14px]">{title}</p><div className="text-[13px] text-muted mt-1 leading-relaxed">{children}</div></div>
+    </li>
+  )
+  const opt = (on: boolean) => cls('rounded-lg border px-3 py-2.5 text-left transition-colors', on ? 'border-accent bg-accent-soft' : 'border-line hover:border-accent/40')
+  return (
+    <div className="grid xl:grid-cols-[1fr_380px] gap-4 items-start [&>*]:min-w-0">
+      <Card className="p-5">
+        <h3 className="font-semibold">상담 통화 녹음 정리</h3>
+        <p className="text-[13px] text-muted mt-1">학원폰으로 학부모와 통화하면 녹음이 서버로 올라가고, Gemini가 받아 적고 요약해서 담당 선생님의 상담 <b>검토 대기</b>에 넣어요. 정리가 끝나면 서버의 녹음 파일은 바로 지워져요.</p>
+
+        <p className="font-semibold text-[14px] mt-5 mb-2">무엇을 올릴까요?</p>
+        <div className="grid sm:grid-cols-3 gap-2">
+          <button className={opt(mode === 'off')} onClick={() => setMode('off')}><span className={cls('block font-semibold text-[14px]', mode === 'off' && 'text-accent')}>끄기</span><span className="block text-[12px] text-muted">아무 녹음도 올리지 않아요</span></button>
+          <button className={opt(mode === 'test')} onClick={() => setMode('test')}><span className={cls('block font-semibold text-[14px]', mode === 'test' && 'text-accent')}>테스트</span><span className="block text-[12px] text-muted">아래 번호와의 통화만 (무료 키로 시험)</span></button>
+          <button className={opt(mode === 'all')} onClick={() => mode !== 'all' && setConfirmAll(true)}><span className={cls('block font-semibold text-[14px]', mode === 'all' && 'text-accent')}>전체 학부모</span><span className="block text-[12px] text-muted">유료 키로 바꾼 뒤에 켜요</span></button>
+        </div>
+        {mode === 'all' && <p className="text-[12px] text-warn mt-2">무료 Gemini 키는 내용이 Google 제품 개선에 쓰일 수 있어요. 반드시 결제를 등록한 키로 쓰세요.</p>}
+
+        <div className="mt-4">
+          <p className="text-[13px] font-semibold">테스트 번호 <span className="font-normal text-muted">이 번호와 통화한 녹음만 올라가요. 그 번호가 학생의 학부모 번호로 등록돼 있어야 정리돼요.</span></p>
+          <ul className="mt-2 flex flex-wrap gap-1.5">
+            {nums.map(n => { const st = studentOf(n); return <li key={n} className="flex items-center gap-1.5 h-8 pl-3 pr-1.5 rounded-full bg-sunken text-[13px] num">{phoneFmt(n)}<span className={cls('text-[11px]', st ? 'text-good' : 'text-warn')}>{st ? `${st.name} 학부모` : '학부모 번호 아님'}</span><button aria-label="삭제" className="p-1 text-faint hover:text-bad" onClick={() => save({ callTestNumbers: nums.filter(x => x !== n) })}><Trash2 size={13} /></button></li> })}
+          </ul>
+          <form className="flex gap-2 mt-2 max-w-[360px]" onSubmit={e => { e.preventDefault(); const d = num.replace(/\D/g, ''); if (d.length < 9 || nums.includes(d)) return; save({ callTestNumbers: [...nums, d] }); setNum('') }}>
+            <Input id="call-test-num" inputMode="tel" placeholder="010-0000-0000" value={num} onChange={e => setNum(e.target.value)} className="num" />
+            <Button type="submit">추가</Button>
+          </form>
+          <p className="text-[12px] text-faint mt-1">시험할 땐 선생님 휴대폰 번호를 넣고, 예시 학생 한 명의 학부모 번호를 그 번호로 바꿔 두면 돼요. 선생님이 학부모 역할로 전화하면 됩니다.</p>
+        </div>
+
+        <ol className="mt-6">
+          <Step n={1} done={!!ping?.ok} title="정리 서버 만들기 (Supabase Edge Function)">
+            Supabase → <b>Edge Functions</b> → <b>Deploy a new function</b> → <b>Via Editor</b>. 이름을 <code className="px-1 rounded bg-sunken">lms-call-summarize</code>로 하고, 아래 버튼으로 코드를 복사해 <code className="px-1 rounded bg-sunken">index.ts</code>에 붙여 넣은 뒤 Deploy. 이 함수는 <b>Verify JWT를 켜 둔 채</b> 그대로 두세요(원장 앱만 호출).
+            <div className="mt-2"><Button size="sm" icon={<Copy size={13} />} onClick={() => { void navigator.clipboard?.writeText(callCode); toast({ title: '정리 서버 코드를 복사했어요', tone: 'good' }) }}>코드 복사</Button></div>
+          </Step>
+          <Step n={2} done={!!ping?.key} title="Gemini 키 넣기">
+            <a className="text-accent underline" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio → API keys</a>에서 키를 만들고, Supabase → <b>Edge Functions → Secrets</b>에 이름 <code className="px-1 rounded bg-sunken">GEMINI_API_KEY</code>로 넣으세요.
+          </Step>
+          <Step n={3} done={false} title="휴대폰 설정">
+            갤럭시 <b>전화 앱 → 설정 → 통화 녹음 → 통화 자동 녹음</b>을 켜세요. 로보로보 LMS 앱을 최신으로 업데이트하고 <b>권한 허용하기</b>(음악·오디오 포함) → <b>상담 통화 녹음 정리</b>를 켜세요.
+          </Step>
+          <Step n={4} done={recent.length > 0} title="시험 통화">
+            테스트 번호로 1분쯤 상담하듯 통화하고 끊으세요. 1분 안에 상담 → <b>검토 대기</b>에 정리된 초안이 들어와요. 휴대폰 앱의 최근 기록에서 진행 상황을 볼 수 있어요.
+          </Step>
+        </ol>
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-sunken">
+          <span className={cls('w-2.5 h-2.5 rounded-full', ping?.ok && ping.key ? 'bg-good' : ping?.ok ? 'bg-warn' : 'bg-bad')} />
+          <p className="flex-1 text-[13px]">{checking ? '정리 서버 확인 중…' : ping?.ok ? (ping.key ? `정리 서버 연결됨 · ${ping.model}` : '정리 서버는 있지만 Gemini 키가 없어요 (2단계)') : `정리 서버에 연결되지 않아요 (1단계)${ping?.message ? ` · ${ping.message}` : ''}`}</p>
+          <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={check}>다시 확인</Button>
+        </div>
+      </Card>
+      <Card>
+        <CardHead title="최근 정리된 통화" sub="검토 대기 · 저장됨" />
+        {recent.length === 0 ? <p className="px-5 pb-5 text-[13px] text-muted">아직 없어요.</p> : (
+          <ul className="px-5 pb-4 flex flex-col gap-3">{recent.map(c => (
+            <li key={c.id} className="text-[13px]"><p><b>{students.find(s => s.id === c.studentId)?.name}</b> <span className="text-muted">{c.date.slice(5).replace('-', '/')} {c.time}</span> <span className={cls('text-[11px] font-semibold', c.status === 'draft' ? 'text-warn' : 'text-good')}>{c.status === 'draft' ? '검토 대기' : '저장됨'}</span></p><p className="text-muted truncate">{c.summary}</p></li>
+          ))}</ul>
+        )}
+      </Card>
+      <Modal open={confirmAll} onClose={() => setConfirmAll(false)} width={440} title="모든 학부모 통화를 정리할까요?" sub="학원폰으로 통화한 모든 학부모 상담이 서버로 올라가 정리돼요."
+        footer={<><Button variant="ghost" onClick={() => setConfirmAll(false)}>취소</Button><Button variant="primary" onClick={() => { setMode('all'); setConfirmAll(false) }}>유료 키로 바꿨어요 · 켜기</Button></>}>
+        <ul className="text-[14px] grid gap-2 list-disc pl-5">
+          <li>Google AI Studio에서 <b>이 키에 결제를 등록</b>했는지 확인하세요. 무료 키는 내용이 Google 제품 개선에 쓰일 수 있어요.</li>
+          <li>학부모님께 "상담 통화는 기록을 위해 녹음·요약될 수 있다"고 미리 안내해 두세요.</li>
+        </ul>
+      </Modal>
     </div>
   )
 }

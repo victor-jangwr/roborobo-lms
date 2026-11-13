@@ -8,7 +8,7 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val api = Api(context)
-        if (api.enabled && api.loggedIn) {
+        if ((api.enabled || api.callUpload) && api.loggedIn) {
             try { SmsService.start(context) } catch (_: Exception) { }
         }
     }

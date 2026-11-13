@@ -203,8 +203,19 @@ function applyRemote(p: Remote) {
       if (i >= 0) { const c = arr.slice(); c[i] = item; return c }
       return k === 'sms' || k === 'consults' ? [item, ...arr] : [...arr, item]
     }
+    const isNew = !(useStore.getState()[k] as Item[]).some(x => x.id === item.id)
     useStore.setState({ [k]: put(useStore.getState()[k] as Item[]) } as Partial<DB>)
     snap = { ...snap, [k]: put(snap[k]) }
+    // 통화 녹음이 정리돼 들어오면 알림
+    const c = item as unknown as { source?: string; status?: string; teacherId?: string; studentId?: string }
+    if (k === 'consults' && isNew && c.source === 'call' && c.status === 'draft') {
+      const st = useStore.getState()
+      const me = st.session
+      if (me && (me.role !== 'teacher' || me.teacherId === c.teacherId)) {
+        const name = st.students.find(x => x.id === c.studentId)?.name ?? ''
+        setTimeout(() => st.toast({ title: `${name} 학부모 통화가 정리됐어요`, body: '상담 → 검토 대기에서 확인하고 저장하세요', tone: 'info' }), 0)
+      }
+    }
   }
   applying = false
 }

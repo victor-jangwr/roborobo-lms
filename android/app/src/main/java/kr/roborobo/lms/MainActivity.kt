@@ -38,7 +38,7 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
 
     private val PERMS: Array<String> by lazy {
-        val p = mutableListOf(Manifest.permission.SEND_SMS, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG)
+        val p = mutableListOf(Manifest.permission.SEND_SMS, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG, CallUploader.mediaPerm)
         if (Build.VERSION.SDK_INT >= 33) p.add(Manifest.permission.POST_NOTIFICATIONS)
         p.toTypedArray()
     }
@@ -145,7 +145,7 @@ class MainActivity : Activity() {
 
     private fun renderMain() {
         val c = card()
-        c.addView(text("문자 발송", 16f, ink, true))
+        c.addView(text("문자 발송 · 통화 녹음", 16f, ink, true))
         c.addView(text("켜 두면 LMS 출결 문자를 이 휴대폰의 문자로 보냅니다. 휴대폰 요금제의 문자가 사용돼요.", 13f, muted))
         c.addView(Switch(this).apply {
             text = "문자 발송 켜기"; textSize = 15f; isChecked = api.enabled && SmsService.running
@@ -157,10 +157,26 @@ class MainActivity : Activity() {
                     askPerms(); return@setOnCheckedChangeListener
                 }
                 api.enabled = on
-                if (on) SmsService.start(this@MainActivity) else SmsService.stop(this@MainActivity)
+                if (on || api.callUpload) SmsService.start(this@MainActivity) else SmsService.stop(this@MainActivity)
                 ui.postDelayed({ refresh() }, 400)
             }
         })
+        c.addView(Switch(this).apply {
+            text = "상담 통화 녹음 정리 (LMS 설정에 따름)"; textSize = 15f; isChecked = api.callUpload
+            setPadding(0, dp(6), 0, dp(6))
+            setOnCheckedChangeListener { _, on ->
+                if (on && (!hasPerm(CallUploader.mediaPerm) || !hasPerm(Manifest.permission.READ_CALL_LOG))) {
+                    isChecked = false
+                    toast("녹음 파일·통화 기록 권한이 필요해요. 권한을 허용한 뒤 다시 켜 주세요.")
+                    askPerms(); return@setOnCheckedChangeListener
+                }
+                api.callUpload = on
+                if (on) { CallUploader.resetBaseline(this@MainActivity); AppLog.add(this@MainActivity, "통화 녹음 정리를 켰어요 (지금 이후 통화부터)") }
+                if (on || api.enabled) SmsService.start(this@MainActivity) else SmsService.stop(this@MainActivity)
+                ui.postDelayed({ refresh() }, 400)
+            }
+        })
+        c.addView(text("갤럭시 전화 앱 설정 → 통화 녹음 → '통화 자동 녹음'을 켜 두세요. 무엇을 올릴지는 LMS 설정 → 상담 녹음에서 정해요(끄기 / 테스트 번호만 / 전체).", 12f, muted))
         c.addView(Switch(this).apply {
             text = "전화 오면 학부모 이름 알림"; textSize = 15f; isChecked = api.callerId
             setPadding(0, dp(6), 0, dp(6))
@@ -187,6 +203,7 @@ class MainActivity : Activity() {
         Manifest.permission.SEND_SMS -> "SMS(문자)"
         Manifest.permission.READ_PHONE_STATE -> "전화"
         Manifest.permission.READ_CALL_LOG -> "통화 기록"
+        Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.READ_EXTERNAL_STORAGE -> "음악·오디오(녹음 파일)"
         else -> "알림"
     }
 
@@ -229,6 +246,7 @@ class MainActivity : Activity() {
         if (!api.loggedIn) lines.add("● 로그인 전")
         else {
             lines.add(if (api.enabled && SmsService.running) "● 문자 발송 켜짐" else "○ 문자 발송 꺼짐")
+            lines.add(if (api.callUpload && SmsService.running) "● 통화 녹음 정리 켜짐" else "○ 통화 녹음 정리 꺼짐")
             if (SmsService.lastError.isNotEmpty()) lines.add("⚠ ${SmsService.lastError}")
         }
         if (missing.isNotEmpty()) lines.add("⚠ 허용 안 된 권한: ${missing.joinToString(", ") { permName(it) }}")

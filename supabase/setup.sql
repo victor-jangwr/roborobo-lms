@@ -429,3 +429,21 @@ begin
   end loop;
   return out;
 end $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- 상담 통화 녹음 (2026-11 추가) — 학원폰 앱이 녹음을 올리면 Edge Function(lms-call-summarize)이
+-- Gemini 로 글·요약을 만들어 상담 '검토 대기'에 넣고, 녹음 파일은 바로 지웁니다.
+-- ════════════════════════════════════════════════════════════════
+insert into storage.buckets (id, name, public) values ('call-recordings', 'call-recordings', false) on conflict (id) do nothing;
+
+drop policy if exists "lms call upload" on storage.objects;
+create policy "lms call upload" on storage.objects for insert to authenticated
+  with check (bucket_id = 'call-recordings' and (storage.foldername(name))[1] = lms_my_branch()::text and lms_my_role() = 'owner');
+
+-- 휴대폰 앱: 지금 녹음을 올려도 되는지 (끄기 / 테스트: 등록 번호만 / 전체)
+create or replace function lms_call_policy() returns json language sql stable security definer set search_path = public as $$
+  select json_build_object(
+    'branch_id', lms_my_branch(),
+    'mode', coalesce((select data->>'callUploadMode' from lms_records where branch_id = lms_my_branch() and kind = 'settings' and id = 'main'), 'off'),
+    'numbers', coalesce((select data->'callTestNumbers' from lms_records where branch_id = lms_my_branch() and kind = 'settings' and id = 'main'), '[]'::jsonb))
+$$;

@@ -127,6 +127,8 @@ export interface Settings {
   payRemindAuto?: boolean       // 미납 자동 재알림 (원장 화면이 열릴 때 하루 한 번)
   payRemindDays?: number        // 납부일이 지나고 며칠마다 다시 보낼지
   payRemindLast?: string        // 마지막 자동 재알림 날짜
+  callUploadMode?: 'off' | 'test' | 'all'   // 상담 통화 녹음 올리기: 끄기 / 테스트 번호만 / 전체 학부모
+  callTestNumbers?: string[]    // 테스트 모드에서 올릴 번호
 }
 
 export type Role = 'hq' | 'owner' | 'teacher' | 'kiosk'

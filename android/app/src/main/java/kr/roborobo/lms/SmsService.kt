@@ -69,7 +69,7 @@ class SmsService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val n = notification("문자 발송 대기 중")
+        val n = notification("학원폰 연결 중")
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         else startForeground(1, n)
         if (worker?.isAlive != true) {
@@ -93,7 +93,7 @@ class SmsService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle("로보로보 LMS 문자 발송")
+            .setContentTitle("로보로보 LMS")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
@@ -109,26 +109,34 @@ class SmsService : Service() {
         val pm = getSystemService(PowerManager::class.java)
         var backoff = 5000L
         AppLog.add(this, "문자 발송을 시작했어요")
+        var tick = 0
         while (!stopFlag.get()) {
             try {
-                if (!api.enabled || !api.loggedIn) { Thread.sleep(5000); continue }
-                val jobs = api.claim(5)
-                lastError = ""
-                if (jobs.length() > 0) {
-                    wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "lms:sms").apply { acquire(5 * 60 * 1000L) }
-                    for (k in 0 until jobs.length()) {
-                        val j = jobs.getJSONObject(k)
-                        val id = j.getString("id")
-                        val to = j.getString("to_phone")
-                        val (ok, err) = send(id, to, j.getString("body"))
-                        try { api.finish(id, ok, err) } catch (e: Exception) { AppLog.add(this, "결과 전송 실패: ${e.message}") }
-                        if (ok) sentToday.incrementAndGet()
-                        AppLog.add(this, if (ok) "발송 완료 → ${mask(to)}" else "발송 실패 → ${mask(to)} ($err)")
-                        Thread.sleep(1500) // 연속 발송 간격 (스팸 차단 예방)
+                if (!api.loggedIn || (!api.enabled && !api.callUpload)) { Thread.sleep(5000); continue }
+                if (api.enabled) {
+                    val jobs = api.claim(5)
+                    lastError = ""
+                    if (jobs.length() > 0) {
+                        wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "lms:sms").apply { acquire(5 * 60 * 1000L) }
+                        for (k in 0 until jobs.length()) {
+                            val j = jobs.getJSONObject(k)
+                            val id = j.getString("id")
+                            val to = j.getString("to_phone")
+                            val (ok, err) = send(id, to, j.getString("body"))
+                            try { api.finish(id, ok, err) } catch (e: Exception) { AppLog.add(this, "결과 전송 실패: ${e.message}") }
+                            if (ok) sentToday.incrementAndGet()
+                            AppLog.add(this, if (ok) "발송 완료 → ${mask(to)}" else "발송 실패 → ${mask(to)} ($err)")
+                            Thread.sleep(1500) // 연속 발송 간격 (스팸 차단 예방)
+                        }
+                        wake?.let { if (it.isHeld) it.release() }
                     }
-                    wake?.let { if (it.isHeld) it.release() }
                 }
-                update("문자 발송 대기 중 · 이번 실행 ${sentToday.get()}건 발송")
+                // 통화 녹음은 20초마다 확인
+                if (api.callUpload && tick % 4 == 0) {
+                    try { CallUploader.check(this, api) } catch (e: Exception) { AppLog.add(this, "녹음 확인 실패: ${e.message}") }
+                }
+                tick++
+                update(listOfNotNull(if (api.enabled) "문자 발송 대기 중 · ${sentToday.get()}건 발송" else null, if (api.callUpload) "통화 녹음 정리 켜짐" else null).joinToString(" · "))
                 backoff = 5000L
                 Thread.sleep(5000)
             } catch (e: InterruptedException) {
