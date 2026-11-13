@@ -12,6 +12,7 @@ import Franchise from './pages/Franchise'
 import { Toasts } from './components/ui'
 import { useStore } from './lib/store'
 import { isCloud } from './lib/cloud'
+import { autoRemind } from './lib/payments'
 import CloudGate from './pages/CloudGate'
 import Billing from './pages/Billing'
 import Classes from './pages/Classes'
@@ -41,6 +42,9 @@ export default function App() {
     if (!session) return
     const n = useStore.getState().splitMixed()
     if (n) useStore.getState().toast({ title: `교재·교구비 청구 ${n}건을 수강료와 따로 나눴어요`, body: '이제 각각 따로 수납할 수 있어요.', tone: 'info' })
+    // 미납 자동 재알림 (설정에서 켠 경우, 원장 화면이 열리면 하루 한 번)
+    const t = setTimeout(() => { autoRemind().then(k => { if (k) useStore.getState().toast({ title: `미납 학부모 ${k}명에게 결제 안내를 자동으로 보냈어요`, tone: 'info' }) }).catch(() => {}) }, 4000)
+    return () => clearTimeout(t)
   }, [session])
   const go = (r: Route) => { if (location.hash !== '#' + r) location.hash = r; setRoute(r); window.scrollTo({ top: 0 }) }
 

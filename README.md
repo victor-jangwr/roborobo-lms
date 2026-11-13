@@ -50,6 +50,7 @@
 3. Supabase **Edge Functions → Deploy a new function → Via Editor**, 이름 `lms-pay-confirm`, 코드는 `supabase/functions/lms-pay-confirm/index.ts` (설정 화면의 "코드 복사" 버튼). 배포 후 **Verify JWT를 끕니다** (학부모는 로그인하지 않음).
 4. **Edge Functions → Secrets**에 `TOSS_SECRET_KEY` = 시크릿 키(`test_sk_…`).
 5. 결제 → 수납 입력 → **링크 만들기** → 학부모가 링크에서 카드 결제 → 승인 서버가 토스 승인 후 수납을 자동 기록합니다.
+6. 여러 명은 결제 → **결제 안내 보내기**: 미납 학부모별로 문자 한 통(수강료·교재비 링크 함께)을 보냅니다. 일괄 청구 창에서 "결제 안내 문자도 바로 보내기"를 켜 두면 청구와 동시에 발송되고, **미납 자동 재알림**을 켜면 납부일이 지난 미납에 N일마다 다시 보냅니다.
 
 ## 동작 방식
 - 출결이 찍히면 문자 기록이 `lms_records`에 저장되고, DB 트리거가 `lms_sms_outbox` 대기열에 넣습니다.

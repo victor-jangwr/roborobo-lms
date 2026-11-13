@@ -99,6 +99,8 @@ export interface Invoice {
   dueDate: string
   createdAt: string
   category?: InvoiceCategory  // 수강료와 교재·교구비는 따로 청구·결제
+  linkSentAt?: string         // 결제 링크 문자를 마지막으로 보낸 때 (YYYY-MM-DD HH:MM)
+  linkSentCount?: number
 }
 export type InvoiceCategory = 'tuition' | 'material' | 'special'
 
@@ -120,6 +122,11 @@ export interface Settings {
   smsTestMode: boolean          // 켜면 모든 문자가 테스트 번호로만 감
   tossClientKey?: string        // 토스페이먼츠 클라이언트 키 (공개 키, test_ck_… / live_ck_…)
   smsTestPhone: string
+  smsPayLink?: string           // 결제 안내 문자 문구 ({학원} {학생} {월} {내역})
+  payLinkOnBill?: boolean       // 일괄 청구하면서 결제 링크도 바로 보내기
+  payRemindAuto?: boolean       // 미납 자동 재알림 (원장 화면이 열릴 때 하루 한 번)
+  payRemindDays?: number        // 납부일이 지나고 며칠마다 다시 보낼지
+  payRemindLast?: string        // 마지막 자동 재알림 날짜
 }
 
 export type Role = 'hq' | 'owner' | 'teacher' | 'kiosk'

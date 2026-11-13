@@ -418,3 +418,14 @@ create or replace function lms_pay_info(p_token text) returns json language sql 
   from lms_pay_links l join lms_branches b on b.id = l.branch_id where l.token = p_token
 $$;
 grant execute on function lms_pay_info(text) to anon;
+
+-- 결제 링크 여러 개 한 번에 만들기 (원장) — p_items: [{invoice_id, amount, order_name, customer}]
+create or replace function lms_create_pay_links(p_items jsonb) returns json language plpgsql security definer set search_path = public as $$
+declare it jsonb; out jsonb := '[]'::jsonb; r json;
+begin
+  for it in select * from jsonb_array_elements(p_items) loop
+    r := lms_create_pay_link(it->>'invoice_id', (it->>'amount')::bigint, it->>'order_name', it->>'customer');
+    out := out || jsonb_build_array(jsonb_build_object('invoice_id', it->>'invoice_id') || r::jsonb);
+  end loop;
+  return out;
+end $$;

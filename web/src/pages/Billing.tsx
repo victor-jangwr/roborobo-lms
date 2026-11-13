@@ -1,8 +1,8 @@
 import { MyRoyalty } from './Franchise'
-import { createPayLink, isTestKey, onlinePayReady } from '../lib/payments'
+import { DEFAULT_PAY_TEXT, createPayLink, isTestKey, onlinePayReady, payText, remainOf, sendPayLinks, unpaidInvoices } from '../lib/payments'
 import { errText, isCloud } from '../lib/cloud'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronLeft, ChevronRight, Download, Pencil, Plus, Receipt, Sparkles, Tag, Trash2, UserPlus, Users } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, Pencil, Plus, Receipt, Send, Sparkles, Tag, Trash2, UserPlus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Route } from '../components/Shell'
 import { Button, Card, CardHead, CountUp, Empty, Field, Input, Modal, PageHead, Pill, Select, Tabs, ease, rise } from '../components/ui'
@@ -12,7 +12,7 @@ import { CATEGORY_LABEL, invoiceCategory, itemTotal, makeInvoices } from '../lib
 import { invoiceTotal, useStore } from '../lib/store'
 import type { DiscountRule, InvoiceCategory, PayMethod, Product } from '../lib/types'
 import { StudentPicker } from '../components/StudentPicker'
-import { cls, fmtMonth, monthOf, parseYmd, won, ymd } from '../lib/util'
+import { addDays, cls, fmtMonth, monthOf, parseYmd, won, ymd } from '../lib/util'
 
 function CatPill({ c }: { c: InvoiceCategory }) {
   return <span className={cls('inline-block text-[11px] font-semibold px-1.5 h-[18px] leading-[18px] rounded mb-1', c === 'material' ? 'bg-warn/15 text-warn' : c === 'special' ? 'bg-accent-soft text-accent' : 'bg-sunken text-muted')}>{CATEGORY_LABEL[c]}</span>
@@ -45,6 +45,9 @@ function Invoices() {
   const [filter, setFilter] = useState<'all' | PayState>('all')
   const [payId, setPayId] = useState<string | null>(null)
   const [preview, setPreview] = useState(false)
+  const [bulkPay, setBulkPay] = useState(false)
+  const saveSettings = useStore(s => s.saveSettings)
+  const [sending, setSending] = useState(false)
   const [cat, setCat] = useState<'all' | InvoiceCategory>('all')
   const monthInvs = db.invoices.filter(i => i.month === month)
   const invs = monthInvs.filter(i => cat === 'all' || invoiceCategory(db, i) === cat)
@@ -69,6 +72,7 @@ function Invoices() {
         <div className="flex-1" />
         <AutoBillSwitch />
         <Button icon={<Download size={15} />} onClick={exportX}>엑셀</Button>
+        <Button icon={<Send size={15} />} onClick={() => setBulkPay(true)}>결제 안내 보내기</Button>
         <Button variant="primary" icon={<Sparkles size={15} />} onClick={() => setPreview(true)}>{Number(month.slice(5))}월 수강료 일괄 청구</Button>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
@@ -101,7 +105,7 @@ function Invoices() {
                       <td className="px-4 py-3 num text-accent">{price - t > 0 ? `-${(price - t).toLocaleString()}` : '-'}</td>
                       <td className="px-4 py-3 num font-semibold">{t.toLocaleString()}</td>
                       <td className="px-4 py-3 num">{paidOf(db, i).toLocaleString()}</td>
-                      <td className="px-4 py-3"><Pill tone={PS[st][1]}>{PS[st][0]}</Pill></td>
+                      <td className="px-4 py-3"><Pill tone={PS[st][1]}>{PS[st][0]}</Pill>{i.linkSentAt && st !== 'paid' && <p className="text-[11px] text-faint mt-1 whitespace-nowrap">안내 {i.linkSentAt.slice(5, 10).replace('-', '/')}{(i.linkSentCount ?? 0) > 1 ? ` · ${i.linkSentCount}회` : ''}</p>}</td>
                       <td className="px-4 py-3 text-right">{st !== 'paid' && <Button size="sm" variant="soft" onClick={() => setPayId(i.id)}>수납 입력</Button>}</td>
                     </tr>
                   )
@@ -113,7 +117,22 @@ function Invoices() {
       </Card>
 
       <Modal open={preview} onClose={() => setPreview(false)} width={600} title={`${fmtMonth(month)} 수강료 일괄 청구`} sub="반에 연결된 수강료로 재원 학생 전원에게 청구하고, 학생별 할인을 자동 적용합니다. 매달 받는 교재·교구비는 수강료와 따로 청구서가 만들어져요. 이미 만든 청구는 건너뛰어요."
-        footer={<><Button variant="ghost" onClick={() => setPreview(false)}>취소</Button><Button variant="primary" disabled={!pending.length} onClick={() => { const n = gen(month); toast({ title: `청구 ${n}건을 만들었어요`, tone: 'good' }); setPreview(false) }}>{pending.length ? `${pending.length}건 청구 만들기` : '새로 만들 청구 없음'}</Button></>}>
+        footer={<>
+          {onlinePayReady(db.settings) && <label className="mr-auto flex items-center gap-2 text-[13px]"><input type="checkbox" checked={!!db.settings.payLinkOnBill} onChange={e => saveSettings({ payLinkOnBill: e.target.checked })} />결제 안내 문자도 바로 보내기</label>}
+          <Button variant="ghost" onClick={() => setPreview(false)}>취소</Button>
+          <Button variant="primary" disabled={!pending.length || sending} onClick={async () => {
+            const before = new Set(useStore.getState().invoices.map(i => i.id))
+            const n = gen(month)
+            const fresh = useStore.getState().invoices.filter(i => !before.has(i.id)).map(i => i.id)
+            if (onlinePayReady(db.settings) && db.settings.payLinkOnBill && fresh.length) {
+              setSending(true)
+              try { const r = await sendPayLinks(fresh); toast({ title: `청구 ${n}건을 만들고 ${r.students}명에게 결제 안내를 보냈어요`, body: db.settings.smsTestMode ? '테스트 모드라 테스트 번호로 가요' : undefined, tone: 'good' }) }
+              catch (e) { toast({ title: `청구 ${n}건은 만들었지만 결제 안내를 못 보냈어요`, body: errText(e), tone: 'warn' }) }
+              finally { setSending(false) }
+            } else toast({ title: `청구 ${n}건을 만들었어요`, tone: 'good' })
+            setPreview(false)
+          }}>{sending ? '보내는 중…' : pending.length ? `${pending.length}건 청구 만들기` : '새로 만들 청구 없음'}</Button>
+        </>}>
         {pending.length === 0 ? <p className="text-[14px] text-muted">이 달은 모든 학생의 수강료 청구가 이미 있어요.</p> : (
           <>
             <div className="grid grid-cols-3 gap-2 mb-3 text-center">
@@ -126,6 +145,7 @@ function Invoices() {
         )}
       </Modal>
       <PayModal id={payId} onClose={() => setPayId(null)} />
+      <PayBulkModal open={bulkPay} month={month} onClose={() => setBulkPay(false)} />
     </div>
   )
 }
@@ -151,6 +171,79 @@ function PayModal({ id, onClose }: { id: string | null; onClose: () => void }) {
         <p className="text-[12px] text-faint">카드 번호나 계좌 번호는 저장하지 않고 결제 수단 종류와 금액만 기록합니다.</p>
         <PayLinkBox invoiceId={inv.id} amount={remain} />
       </div>
+    </Modal>
+  )
+}
+
+/** 미납 학부모에게 결제 안내(링크) 한꺼번에 보내기 */
+function PayBulkModal({ open, month, onClose }: { open: boolean; month: string; onClose: () => void }) {
+  const db = useStore(s => s)
+  const saveSettings = useStore(s => s.saveSettings), toast = useStore(s => s.toast)
+  const [scope, setScope] = useState<'month' | 'all'>('month')
+  const [who, setWho] = useState<'all' | 'never' | 'old'>('all')
+  const [off, setOff] = useState<string[]>([])
+  const [tpl, setTpl] = useState('')
+  const [editTpl, setEditTpl] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [was, setWas] = useState(false)
+  if (open !== was) { setWas(open); if (open) { setOff([]); setTpl(db.settings.smsPayLink || DEFAULT_PAY_TEXT); setEditTpl(false) } }
+  const ready = onlinePayReady(db.settings)
+  const days = db.settings.payRemindDays ?? 3
+  const cut = addDays(db.clock.date, -days)
+  const invs = unpaidInvoices(db, scope === 'month' ? month : undefined)
+    .filter(i => who === 'all' || (who === 'never' ? !i.linkSentAt : (!i.linkSentAt || i.linkSentAt.slice(0, 10) <= cut)))
+  const groups = [...invs.reduce((m, i) => m.set(i.studentId, [...(m.get(i.studentId) ?? []), i]), new Map<string, typeof invs>())]
+    .map(([sid, list]) => ({ st: db.students.find(x => x.id === sid)!, list })).sort((a, b) => a.st.name.localeCompare(b.st.name))
+  const chosen = groups.filter(g => !off.includes(g.st.id))
+  const total = chosen.reduce((a, g) => a + g.list.reduce((b, i) => b + remainOf(db, i), 0), 0)
+  const sample = chosen[0] ?? groups[0]
+  const send = async () => {
+    setBusy(true)
+    try {
+      if (tpl !== (db.settings.smsPayLink || DEFAULT_PAY_TEXT)) saveSettings({ smsPayLink: tpl })
+      const r = await sendPayLinks(chosen.flatMap(g => g.list.map(i => i.id)))
+      toast({ title: `${r.students}명에게 결제 안내를 보냈어요`, body: `${r.links}건 결제 링크${db.settings.smsTestMode ? ' · 테스트 모드라 테스트 번호로 가요' : ''}${r.skipped.length ? ` · 연락처 없음 ${r.skipped.join(', ')}` : ''}`, tone: 'good' })
+      onClose()
+    } catch (e) { toast({ title: '결제 안내를 보내지 못했어요', body: errText(e), tone: 'bad' }) } finally { setBusy(false) }
+  }
+  const chip = (on: boolean) => cls('h-8 px-3 rounded-full text-[13px] border transition-colors', on ? 'bg-ink text-bg border-ink' : 'border-line text-muted hover:text-ink')
+  return (
+    <Modal open={open} onClose={onClose} width={640} title="결제 안내 보내기" sub="미납 학부모에게 카드 결제 링크를 문자로 보내요. 수강료·교재비가 함께 미납이면 한 문자에 링크 두 개가 들어가요."
+      footer={ready ? <>
+        <span className="mr-auto text-[13px] text-muted"><b className="text-ink num">{chosen.length}명</b> · {won(total)}</span>
+        <Button variant="ghost" onClick={onClose}>취소</Button>
+        <Button variant="primary" icon={<Send size={15} />} disabled={!chosen.length || busy} onClick={send}>{busy ? '보내는 중…' : `${chosen.length}명에게 보내기`}</Button>
+      </> : <Button variant="ghost" onClick={onClose}>닫기</Button>}>
+      {!ready ? <p className="text-[14px] text-muted">{isCloud ? '설정 → 온라인 결제에서 토스페이먼츠 키를 먼저 넣어 주세요.' : '서버에 연결한 LMS에서 쓸 수 있어요.'}</p> : <div className="grid gap-4">
+        <div className="flex flex-wrap gap-1.5">
+          <button className={chip(scope === 'month')} onClick={() => setScope('month')}>{fmtMonth(month)} 미납</button>
+          <button className={chip(scope === 'all')} onClick={() => setScope('all')}>모든 달 미납</button>
+          <span className="w-px h-6 bg-line mx-1 self-center" />
+          <button className={chip(who === 'all')} onClick={() => setWho('all')}>전체</button>
+          <button className={chip(who === 'never')} onClick={() => setWho('never')}>아직 안 보낸 학생</button>
+          <button className={chip(who === 'old')} onClick={() => setWho('old')}>보낸 지 {days}일 지난 학생</button>
+        </div>
+        {groups.length === 0 ? <p className="text-[14px] text-muted py-6 text-center">보낼 미납 청구가 없어요.</p> : (
+          <ul className="max-h-[34vh] overflow-y-auto thin-scroll flex flex-col gap-1 -mx-1 px-1">
+            {groups.map(({ st, list }) => { const on = !off.includes(st.id); return (
+              <li key={st.id}><button onClick={() => setOff(x => on ? [...x, st.id] : x.filter(y => y !== st.id))} className={cls('w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left', on ? 'border-accent/50 bg-accent-soft/40' : 'border-transparent hover:bg-sunken/60')}>
+                <input type="checkbox" readOnly checked={on} tabIndex={-1} />
+                <span className="flex-1 min-w-0"><span className="font-medium text-[14px]">{st.name}</span> <span className="text-[12px] text-muted">{list.map(i => `${CATEGORY_LABEL[invoiceCategory(db, i)]}${scope === 'all' ? `(${Number(i.month.slice(5))}월)` : ''}`).join(' · ')}</span>
+                  {list.some(i => i.linkSentAt) && <span className="block text-[11px] text-faint">마지막 안내 {list.map(i => i.linkSentAt).filter(Boolean).sort().pop()!.slice(5, 16).replace('-', '/')}</span>}</span>
+                <span className="num text-[13px] font-semibold">{won(list.reduce((a, i) => a + remainOf(db, i), 0))}</span>
+              </button></li>
+            ) })}
+          </ul>
+        )}
+        {sample && <div className="rounded-lg bg-sunken p-3">
+          <div className="flex items-center gap-2 mb-1.5"><p className="text-[12px] font-semibold text-muted flex-1">문자 미리보기 · {sample.st.name}</p><button className="text-[12px] text-accent font-medium" onClick={() => setEditTpl(!editTpl)}>{editTpl ? '닫기' : '문구 고치기'}</button></div>
+          {editTpl && <><textarea id="pay-tpl" rows={4} value={tpl} onChange={e => setTpl(e.target.value)} className="w-full bg-surface rounded-md border border-line p-2 text-[13px] outline-none focus:border-accent" />
+            <p className="text-[11px] text-faint mb-2">{'{학원} {학생} {월} {내역}'}을 넣으면 자동으로 바뀌어요. {'{내역}'}에 금액과 결제 링크가 들어가요.</p></>}
+          <p className="text-[13px] whitespace-pre-wrap leading-relaxed">{payText({ ...db, settings: { ...db.settings, smsPayLink: tpl } }, sample.st.id, sample.list, {})}</p>
+        </div>}
+        <label className="flex items-start gap-2 text-[13px]"><input type="checkbox" className="mt-0.5" checked={!!db.settings.payRemindAuto} onChange={e => saveSettings({ payRemindAuto: e.target.checked })} />
+          <span>미납 자동 재알림<span className="block text-[12px] text-muted">납부일이 지났는데 아직 안 낸 학부모에게 <select aria-label="재알림 간격" value={days} onChange={e => saveSettings({ payRemindDays: Number(e.target.value) })} className="bg-transparent border-b border-line font-medium text-ink">{[2, 3, 5, 7].map(n => <option key={n} value={n}>{n}일</option>)}</select>마다 결제 안내를 다시 보내요. 원장님이 LMS를 여는 날 하루 한 번 자동으로 보내요.</span></span></label>
+      </div>}
     </Modal>
   )
 }

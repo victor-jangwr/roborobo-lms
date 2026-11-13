@@ -31,6 +31,10 @@ export const defaultSettings: Settings = {
   autoBillOnEnroll: true,
   smsTestMode: true,
   smsTestPhone: '',
+  smsPayLink: '[{학원}] {학생} 학생 {월} 결제 안내입니다.\n{내역}\n링크를 누르면 카드로 바로 결제하실 수 있어요.',
+  payLinkOnBill: false,
+  payRemindAuto: false,
+  payRemindDays: 3,
 }
 
 const B = 'br_main'
