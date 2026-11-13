@@ -107,13 +107,13 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 520
       {open && (
         <motion.div className="fixed inset-0 z-50 grid place-items-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <div className="absolute inset-0 bg-[rgb(var(--shadow)/0.38)] backdrop-blur-[2px]" onClick={onClose} />
-          <motion.div role="dialog" aria-modal className="relative w-full bg-surface rounded-xl shadow-pop border border-line flex flex-col max-h-[calc(100%-32px)]" style={{ maxWidth: width }}
+          <motion.div role="dialog" aria-modal className="relative w-full bg-surface rounded-xl shadow-pop border border-line flex flex-col max-h-[calc(100dvh-32px)]" style={{ maxWidth: width }}
             initial={{ opacity: 0, y: 14, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }} transition={{ duration: 0.22, ease }}>
             <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3">
               <div><h2 className="text-[17px] font-semibold">{title}</h2>{sub && <p className="text-[13px] text-muted mt-1">{sub}</p>}</div>
               <button onClick={onClose} className="p-1.5 -m-1 rounded-md text-faint hover:text-ink hover:bg-sunken" aria-label="닫기"><X size={18} /></button>
             </div>
-            <div className="px-6 pb-5 overflow-y-auto thin-scroll">{children}</div>
+            <div className="px-6 pb-5 overflow-y-auto thin-scroll min-h-0">{children}</div>
             {footer && <div className="px-6 py-4 border-t border-line flex justify-end gap-2 bg-sunken/50 rounded-b-xl">{footer}</div>}
           </motion.div>
         </motion.div>

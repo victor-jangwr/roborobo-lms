@@ -12,12 +12,16 @@ import { CATEGORY_LABEL, invoiceCategory } from '../lib/seed'
 import type { Student, StudentStatus } from '../lib/types'
 import { cls, fmtDate, fmtMonth, fmtShort, monthOf, nextGrade, phoneFmt, phoneValid, won } from '../lib/util'
 import { STATE } from './Dashboard'
+import { usePhone, useCan, consultViewer } from '../lib/perms'
 
 const STATUS = { active: ['재원', 'good'], paused: ['휴원', 'warn'], left: ['퇴원', 'neutral'] } as const
 const GRADES = ['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3']
 
 export default function Students(_: { go: (r: Route) => void }) {
+  const ph = usePhone()
   const db = useStore(s => s)
+  const can = useCan()
+  const isOwner = db.session?.role === 'owner'
   const toast = useStore(s => s.toast)
   const [tab, setTab] = useState<'active' | 'paused' | 'left' | 'all'>('active')
   const [q, setQ] = useState(''), [grade, setGrade] = useState('')
@@ -48,9 +52,9 @@ export default function Students(_: { go: (r: Route) => void }) {
     <div>
       <PageHead title="학생" sub="등록하면 출결 번호가 자동으로 발급됩니다."
         right={<>
-          <Button icon={<Upload size={15} />} onClick={() => setImporting(true)}>엑셀 가져오기</Button>
+          {can('students.edit') && <Button icon={<Upload size={15} />} onClick={() => setImporting(true)}>엑셀 가져오기</Button>}
           <Button icon={<Download size={15} />} onClick={exportXlsx}>{picked.length ? `선택 ${picked.length}명 내보내기` : '엑셀 내보내기'}</Button>
-          <Button variant="primary" icon={<Plus size={16} />} onClick={() => setForm({ grade: '초4', birthYear: Number(db.clock.date.slice(0, 4)) - 10 })}>학생 등록</Button>
+          {can('students.edit') && <Button variant="primary" icon={<Plus size={16} />} onClick={() => setForm({ grade: '초4', birthYear: Number(db.clock.date.slice(0, 4)) - 10 })}>학생 등록</Button>}
         </>} />
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <Tabs value={tab} onChange={setTab} items={[
@@ -82,7 +86,7 @@ export default function Students(_: { go: (r: Route) => void }) {
                     <td className="px-4 py-2.5 text-muted">{s.grade} · {s.school}</td>
                     <td className="px-4 py-2.5"><div className="flex flex-wrap gap-1">{ks.map(k => <span key={k.id} className="text-[12px] px-2 h-[22px] leading-[22px] rounded-md bg-sunken">{k.name}</span>)}{!ks.length && <span className="text-faint text-[13px]">없음</span>}</div></td>
                     <td className="px-4 py-2.5 num font-mono font-semibold">{s.code}</td>
-                    <td className="px-4 py-2.5 num text-muted">{phoneFmt(s.parentPhone)}</td>
+                    <td className="px-4 py-2.5 num text-muted">{ph(s, phoneFmt)}</td>
                     <td className="px-4 py-2.5">{ps ? <Pill tone={ps === 'paid' ? 'good' : ps === 'partial' ? 'late' : 'bad'}>{ps === 'paid' ? '완납' : ps === 'partial' ? '부분납' : '미납'}</Pill> : <span className="text-faint text-[13px]">청구 없음</span>}</td>
                     <td className="px-4 py-2.5"><Pill tone={STATUS[s.status][1]} dot>{STATUS[s.status][0]}</Pill></td>
                   </motion.tr>
@@ -101,7 +105,7 @@ export default function Students(_: { go: (r: Route) => void }) {
             <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-2xl bg-ink text-bg px-3 py-2.5 shadow-[0_12px_40px_rgb(var(--shadow)/0.28)] max-w-full">
               <span className="px-2 text-[14px] font-semibold num">{picked.length}명 선택</span>
               <span className="w-px h-5 bg-bg/20 mx-1" />
-              {BULK.map(b => (
+              {BULK.filter(b => b.mode === 'discount' ? isOwner : b.mode === 'class' ? can('classes.enroll') : can('students.edit')).map(b => (
                 <button key={b.mode} onClick={() => setBulk(b.mode)} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15 transition-colors"><b.icon size={15} />{b.label}</button>
               ))}
               <button onClick={exportXlsx} className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium hover:bg-bg/15"><Download size={15} />엑셀</button>
@@ -224,6 +228,7 @@ function BulkModal({ mode, ids, onClose, onDone }: { mode: BulkMode | null; ids:
 }
 
 export function StudentForm({ draft, onClose }: { draft: Partial<Student> | null; onClose: () => void }) {
+  const ph = usePhone()
   const save = useStore(s => s.saveStudent)
   const [v, setV] = useState<Partial<Student>>({})
   const [key, setKey] = useState<unknown>(null)
@@ -246,7 +251,7 @@ export function StudentForm({ draft, onClose }: { draft: Partial<Student> | null
                   className="w-14 h-16 grid place-items-center rounded-xl bg-accent-soft text-accent num font-mono text-[30px] font-semibold border border-accent/30">{c}</motion.span>
               ))}
             </div>
-            <p className="text-[13px] text-muted mt-4">학원 입구 태블릿에 이 번호를 누르면 등원·하원이 기록되고 {phoneFmt(done.parentPhone)}로 문자가 갑니다.</p>
+            <p className="text-[13px] text-muted mt-4">학원 입구 태블릿에 이 번호를 누르면 등원·하원이 기록되고 {ph(done, phoneFmt)}로 문자가 갑니다.</p>
           </motion.div>
         ) : (
           <motion.div key="form" className="grid gap-4">
@@ -272,12 +277,14 @@ export function StudentForm({ draft, onClose }: { draft: Partial<Student> | null
 }
 
 export function StudentDrawer({ id, onClose, onEdit }: { id: string | null; onClose: () => void; onEdit?: (s: Student) => void }) {
+  const ph = usePhone()
+  const can = useCan()
   const db = useStore(s => s)
   const toggleDisc = useStore(s => s.toggleStudentDiscount)
   const [tab, setTab] = useState<'info' | 'history' | 'att' | 'consult' | 'pay' | 'sms'>('info')
   const session = db.session!
   const isTeacher = session.role === 'teacher'
-  const viewer = { role: session.role, teacherId: isTeacher ? session.teacherId : undefined }
+  const viewer = consultViewer(db)
   const s = db.students.find(x => x.id === id)
   const history = useMemo(() => {
     if (!s) return []
@@ -297,12 +304,12 @@ export function StudentDrawer({ id, onClose, onEdit }: { id: string | null; onCl
   return (
     <Drawer open={!!id} onClose={onClose} width={620}
       title={<div className="flex items-center gap-3"><Avatar name={s.name} size={40} color="rgb(var(--accent))" /><div><h2 className="text-[18px] font-semibold flex items-center gap-2">{s.name} <Pill tone={STATUS[s.status][1]} dot>{STATUS[s.status][0]}</Pill></h2><p className="text-[13px] text-muted">{s.grade} · {s.school} · 출결번호 <b className="num font-mono text-ink">{s.code}</b></p></div></div>}
-      footer={onEdit && !isTeacher ? <Button onClick={() => onEdit(s)}>정보 수정</Button> : undefined}>
+      footer={onEdit && can('students.edit') ? <Button onClick={() => onEdit(s)}>정보 수정</Button> : undefined}>
       <Tabs value={tab} onChange={setTab} className="mb-5" items={[{ value: 'info', label: '기본 정보' }, { value: 'history', label: '수업 이력', count: history.length }, { value: 'att', label: '출결' }, { value: 'consult', label: '상담', count: consults.length }, ...(isTeacher ? [] : [{ value: 'pay' as const, label: '청구·수납', count: invs.length }]), { value: 'sms', label: '문자' }]} />
       {tab === 'info' && (
         <div className="grid gap-5">
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-[14px]">
-            {[['출생연도', `${s.birthYear}년 (${Number(db.clock.date.slice(0, 4)) - s.birthYear + 1}세)`], ['등록일', fmtDate(s.joinedAt)], ['학부모', s.parentName || '-'], ['연락처', phoneFmt(s.parentPhone)], ['메모', s.memo || '-']].map(([k, v]) => <div key={k}><dt className="text-[12px] text-muted">{k}</dt><dd className="font-medium mt-0.5 num">{v}</dd></div>)}
+            {[['출생연도', `${s.birthYear}년 (${Number(db.clock.date.slice(0, 4)) - s.birthYear + 1}세)`], ['등록일', fmtDate(s.joinedAt)], ['학부모', s.parentName || '-'], ['연락처', ph(s, phoneFmt)], ['메모', s.memo || '-']].map(([k, v]) => <div key={k}><dt className="text-[12px] text-muted">{k}</dt><dd className="font-medium mt-0.5 num">{v}</dd></div>)}
           </dl>
           {!isTeacher && <div>
             <p className="text-[13px] font-medium mb-2">고정 할인 <span className="text-muted font-normal">매달 청구서에 자동 적용</span></p>

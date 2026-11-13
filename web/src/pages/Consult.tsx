@@ -12,13 +12,11 @@ import { invoiceTotal, useStore } from '../lib/store'
 import type { Consult, ConsultChannel, Student } from '../lib/types'
 import { addDays, cls, daysBetween, fmtDate, fmtShort, monthOf, phoneFmt } from '../lib/util'
 import { STATE } from './Dashboard'
+import { usePhone, useConsultViewer } from '../lib/perms'
 
 const CH_ICON: Record<ConsultChannel, typeof Phone> = { call: Phone, visit: Users, student: User, message: MessageSquareText }
 
-function useViewer() {
-  const s = useStore(st => st.session)!
-  return { role: s.role, teacherId: s.role === 'teacher' ? s.teacherId : undefined }
-}
+const useViewer = useConsultViewer
 
 export default function ConsultPage(_: { go: (r: Route) => void }) {
   const db = useStore(s => s)
@@ -27,7 +25,7 @@ export default function ConsultPage(_: { go: (r: Route) => void }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [tFilter, setTFilter] = useState('')
   const [ring, setRing] = useState(false)
-  const students = useMemo(() => myStudents(db, viewer.teacherId ?? (tFilter || undefined)), [db, viewer.teacherId, tFilter])
+  const students = useMemo(() => myStudents(db, (viewer.all ? undefined : viewer.teacherId) ?? (tFilter || undefined)), [db, viewer.all, viewer.teacherId, tFilter])
   const all = visibleConsults(db, viewer)
   const saved = all.filter(c => c.status === 'saved')
   const drafts = all.filter(c => c.status === 'draft')
@@ -38,7 +36,7 @@ export default function ConsultPage(_: { go: (r: Route) => void }) {
 
   return (
     <div>
-      <PageHead title="상담" sub={viewer.role === 'teacher' ? '이번 분기 내 반 학생과 상담 기록만 보여요.' : '학생별 상담 기록과 다음 할 일을 관리합니다. 학원 휴대폰 통화는 자동으로 정리되어 검토 대기에 들어와요.'}
+      <PageHead title="상담" sub={viewer.role === 'teacher' && !viewer.all ? '이번 분기 내 반 학생과 상담 기록만 보여요.' : '학생별 상담 기록과 다음 할 일을 관리합니다. 학원 휴대폰 통화는 자동으로 정리되어 검토 대기에 들어와요.'}
         right={<Button variant="soft" icon={<PhoneIncoming size={15} />} onClick={() => setRing(true)}>전화 수신 화면 미리보기</Button>} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
@@ -233,6 +231,7 @@ async function getSample(): Promise<SampleFn | null> {
 }
 
 function ConsultDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const ph = usePhone()
   const db = useStore(s => s)
   const viewer = useViewer()
   const save = useStore(s => s.saveConsult), del = useStore(s => s.deleteConsult), toggle = useStore(s => s.toggleNext), toast = useStore(s => s.toast)
@@ -281,7 +280,7 @@ ${paste.slice(0, 6000)}`, { modelTier: 'quick' })
 
   return (
     <Drawer open={!!id} onClose={onClose} width={1000}
-      title={<div className="flex items-center gap-3"><Avatar name={s.name} size={40} color="rgb(var(--accent))" /><div><h2 className="text-[18px] font-semibold">{s.name} 상담</h2><p className="text-[13px] text-muted">{s.grade} · {s.school} · {s.parentName} 학부모 <span className="num">{phoneFmt(s.parentPhone)}</span></p></div></div>}>
+      title={<div className="flex items-center gap-3"><Avatar name={s.name} size={40} color="rgb(var(--accent))" /><div><h2 className="text-[18px] font-semibold">{s.name} 상담</h2><p className="text-[13px] text-muted">{s.grade} · {s.school} · {s.parentName} 학부모 <span className="num">{ph(s, phoneFmt)}</span></p></div></div>}>
       <div className="grid lg:grid-cols-[280px_1fr] gap-6">
         <aside className="flex flex-col gap-4 lg:sticky lg:top-0 self-start">
           <div className="rounded-xl bg-sunken/70 p-4">
@@ -380,10 +379,11 @@ ${paste.slice(0, 6000)}`, { modelTier: 'quick' })
 
 /** 학원 휴대폰 앱의 수신 화면 미리보기: LMS에서 번호를 찾아 학부모·학생 정보를 띄움 */
 function IncomingCall({ open, onClose, onOpenStudent, onDraft }: { open: boolean; onClose: () => void; onOpenStudent: (id: string) => void; onDraft: () => void }) {
+  const ph = usePhone()
   const db = useStore(s => s)
   const viewer = useViewer()
   const addDraft = useStore(s => s.addCallDraft), toast = useStore(s => s.toast)
-  const pool = useMemo(() => myStudents(db, viewer.teacherId), [db, viewer.teacherId])
+  const pool = useMemo(() => myStudents(db, viewer.all ? undefined : viewer.teacherId), [db, viewer.all, viewer.teacherId])
   const [sid, setSid] = useState('')
   const [phase, setPhase] = useState<'ring' | 'talk'>('ring')
   const [sec, setSec] = useState(0)
@@ -417,7 +417,7 @@ function IncomingCall({ open, onClose, onOpenStudent, onDraft }: { open: boolean
                   <div className="relative w-20 h-20 rounded-full bg-white/15 grid place-items-center text-[28px] font-bold">{s.parentName.slice(0, 1)}</div>
                 </div>
                 <p className="text-center text-[22px] font-bold mt-4">{s.parentName} 학부모님</p>
-                <p className="text-center text-[13px] text-white/70 num">{phoneFmt(s.parentPhone)}</p>
+                <p className="text-center text-[13px] text-white/70 num">{ph(s, phoneFmt)}</p>
                 <div className="mt-4 rounded-2xl bg-white/10 p-3 text-[12px] leading-relaxed">
                   {siblings.map(x => { const k = studentClasses(db, x.id, termId); return <p key={x.id}><b className="text-[13px]">{x.name}</b> · {x.grade} · {k.map(kk => kk.name).join(', ')}</p> })}
                   <p className="text-white/70 mt-1.5">{last ? `최근 상담 ${fmtShort(last.date)} · ${last.tags.join(', ')}` : '상담 기록 없음'}</p>

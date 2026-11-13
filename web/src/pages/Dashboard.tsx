@@ -9,6 +9,7 @@ import { Avatar, Button, Card, CardHead, CountUp, Empty, Pill, TeacherDot, ease,
 import { invoiceTotal, useStore } from '../lib/store'
 import { paidOf, sessionsOn, uncheckedToday, visibleConsults, waitingMakeups, weekLabel, type RosterState, type SessionRow } from '../lib/derive'
 import { cls, daysBetween, fmtDate, fmtShort, monthOf, phoneFmt, toMin, won } from '../lib/util'
+import { usePhone, useCan, consultViewer } from '../lib/perms'
 
 export const STATE: Record<RosterState, { label: string; tone: Tone; color: string }> = {
   present: { label: '출석', tone: 'good', color: 'rgb(var(--good))' },
@@ -88,11 +89,15 @@ export default function Dashboard({ go }: { go: (r: Route) => void }) {
   const toast = useStore(s => s.toast)
   const { date, time } = db.clock
   const session = db.session!
-  const tId = session.role === 'teacher' ? session.teacherId : undefined
+  const can = useCan()
+  const tId = session.role === 'teacher' && !can('attendance.all') ? session.teacherId : undefined
+  const mkTid = session.role === 'teacher' && !can('makeup.all') ? session.teacherId : undefined
+  const canMark = can('attendance.all') || can('attendance.mine')
+  const canMakeup = can('makeup.all') || can('makeup.mine')
   const teacher = db.teachers.find(t => t.id === tId)
   const sessions = useMemo(() => sessionsOn(db, date, time, { teacherId: tId }), [db, date, time, tId])
   const unchecked = useMemo(() => uncheckedToday(db, date, time, tId), [db, date, time, tId])
-  const waiting = useMemo(() => waitingMakeups(db, tId), [db, tId])
+  const waiting = useMemo(() => waitingMakeups(db, mkTid), [db, mkTid])
   const [assignId, setAssignId] = useState<string | null>(null)
   const nowM = toMin(time)
   const roster = sessions.flatMap(s => s.roster)
@@ -141,10 +146,10 @@ export default function Dashboard({ go }: { go: (r: Route) => void }) {
                           <p className="text-[13px] text-muted">{u.session.klass.name} {u.session.slot.start} 시작 · <span className="text-warn font-medium">{nowM - toMin(u.session.slot.start)}분 지남</span></p>
                         </div>
                         <span className="hidden md:flex items-center gap-1 text-[12px] text-muted num"><Phone size={12} />{phoneFmt(u.student.parentPhone)}</span>
-                        <div className="flex gap-1.5">
+                        {canMark && <div className="flex gap-1.5">
                           <Button size="sm" variant="outline" onClick={() => { mark(u.student.id, u.session.klass.id, 'late', '수동 출석'); toast({ title: `${u.student.name} 지각 출석으로 처리했어요`, tone: 'good' }) }}>지각 출석</Button>
                           <Button size="sm" variant="danger" icon={<UserX size={14} />} onClick={() => { mark(u.student.id, u.session.klass.id, 'absent'); toast({ title: `${u.student.name} 결석 처리`, body: `${weekLabel(db, date)} 결석 · 보강 대기에 추가했어요`, tone: 'warn' }) }}>결석</Button>
-                        </div>
+                        </div>}
                       </motion.li>
                     ))}
                   </AnimatePresence>
@@ -178,7 +183,7 @@ export default function Dashboard({ go }: { go: (r: Route) => void }) {
                             <p className="font-semibold text-[14px]">{s.name} <span className="text-[12px] text-faint font-normal">{k.name}</span></p>
                             <p className="text-[12px] text-muted"><span className="text-accent font-semibold">{weekLabel(db, m.absentDate)}</span> 결석 · {fmtShort(m.absentDate)} · <span className={cls(days >= 7 && 'text-bad font-medium')}>{days}일째 대기</span></p>
                           </div>
-                          <Button size="sm" variant="soft" onClick={() => setAssignId(m.id)}>일정 잡기</Button>
+                          {canMakeup && <Button size="sm" variant="soft" onClick={() => setAssignId(m.id)}>일정 잡기</Button>}
                         </motion.li>
                       )
                     })}
@@ -215,9 +220,10 @@ export default function Dashboard({ go }: { go: (r: Route) => void }) {
 }
 
 function ConsultCard({ go }: { go: (r: Route) => void }) {
+  const ph = usePhone()
   const db = useStore(s => s)
   const session = db.session!
-  const viewer = { role: session.role, teacherId: session.role === 'teacher' ? session.teacherId : undefined }
+  const viewer = consultViewer(db)
   const all = visibleConsults(db, viewer)
   const drafts = all.filter(c => c.status === 'draft').length
   const due = all.filter(c => c.status === 'saved' && c.next && !c.next.done && c.next.due <= db.clock.date)
@@ -230,7 +236,7 @@ function ConsultCard({ go }: { go: (r: Route) => void }) {
           {due.slice(0, 5).map(c => { const s = db.students.find(x => x.id === c.studentId)!; return (
             <li key={c.id} className="text-[13px]">
               <p className="font-medium">{c.next!.text}</p>
-              <p className="text-muted">{s.name} · {s.parentName} <span className="num">{phoneFmt(s.parentPhone)}</span> · <span className={cls(c.next!.due < db.clock.date ? 'text-bad' : 'text-warn')}>{c.next!.due < db.clock.date ? `${daysBetween(c.next!.due, db.clock.date)}일 지남` : '오늘'}</span></p>
+              <p className="text-muted">{s.name} · {s.parentName} <span className="num">{ph(s, phoneFmt)}</span> · <span className={cls(c.next!.due < db.clock.date ? 'text-bad' : 'text-warn')}>{c.next!.due < db.clock.date ? `${daysBetween(c.next!.due, db.clock.date)}일 지남` : '오늘'}</span></p>
             </li>) })}
         </ul>
       )}

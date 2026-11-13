@@ -8,13 +8,15 @@ import { useStore } from '../lib/store'
 import type { ClassSlot, Klass } from '../lib/types'
 import { WEEKDAYS, WORK_DAYS, addDays, cls, fmtDate, fmtShort, phoneFmt, toMin, weekdayOf } from '../lib/util'
 import { STATE } from './Dashboard'
+import { usePhone, useCan } from '../lib/perms'
 
 const H = 52 // 1시간 높이(px)
 
 export default function Timetable(_: { go: (r: Route) => void }) {
   const db = useStore(s => s)
   const session = db.session!
-  const [tid, setTid] = useState<string>(session.role === 'teacher' ? session.teacherId! : 'all')
+  const can = useCan()
+  const [tid, setTid] = useState<string>(session.role === 'teacher' && !can('classes.all') ? session.teacherId! : 'all')
   const termId = db.activeTermId
   const term = db.terms.find(t => t.id === termId)!
   const classes = db.classes.filter(c => c.termId === termId && (tid === 'all' || c.teacherId === tid))
@@ -49,7 +51,7 @@ export default function Timetable(_: { go: (r: Route) => void }) {
   return (
     <div>
       <PageHead title="시간표" sub={`${term.name} · 반 정보를 바꾸면 시간표가 자동으로 바뀝니다.`} />
-      {session.role !== 'teacher' && (
+      {(session.role !== 'teacher' || can('classes.all')) && (
         <div className="flex flex-wrap gap-2 mb-4">
           <button onClick={() => setTid('all')} className={cls('h-9 px-3.5 rounded-lg border text-[13px] font-medium transition', tid === 'all' ? 'bg-ink text-surface border-ink' : 'border-line bg-surface hover:bg-sunken')}>전체 강사</button>
           {db.teachers.filter(t => t.active).map(t => (
@@ -106,6 +108,8 @@ function Block({ k, s, top, height, lane, of, delay, onOpen }: { k: Klass; s: Cl
 
 /** 수업을 누르면: 수강생, 학부모 연락처, 날짜별 출결 */
 function Roster({ sel, onClose }: { sel: { k: Klass; s: ClassSlot } | null; onClose: () => void }) {
+  const ph = usePhone()
+  const can = useCan()
   const db = useStore(st => st)
   const openStudent = useStore(st => st.openStudent), mark = useStore(st => st.markAttendance), toast = useStore(st => st.toast)
   const today = db.clock.date
@@ -127,6 +131,7 @@ function Roster({ sel, onClose }: { sel: { k: Klass; s: ClassSlot } | null; onCl
     return { label: '기록 없음', tone: 'neutral' as const, color: 'rgb(var(--line))' }
   }
   const rows = members.map(m => ({ m, st: stateOf(m.id, date) }))
+  const canMark = can('attendance.all') || (can('attendance.mine') && k.teacherId === db.session?.teacherId)
   const count = (l: string) => rows.filter(r => r.st.label === l).length
   const copy = async (txt: string) => { try { await navigator.clipboard.writeText(txt); toast({ title: '번호를 복사했어요', body: txt }) } catch { toast({ title: txt, body: '복사가 안 되는 화면이에요. 번호를 길게 눌러 복사하세요' }) } }
   return (
@@ -148,11 +153,11 @@ function Roster({ sel, onClose }: { sel: { k: Klass; s: ClassSlot } | null; onCl
             {rows.map(({ m, st }) => (
               <tr key={m.id} className="border-b border-line/60 last:border-0">
                 <td className="px-2 py-2.5"><button onClick={() => openStudent(m.id)} className="flex items-center gap-2 text-left group"><Avatar name={m.name} size={28} color={t?.color} /><span><span className="font-medium group-hover:text-accent">{m.name}</span><span className="block text-[12px] text-faint">{m.grade} · {m.school}</span></span></button></td>
-                <td className="px-2 py-2.5"><span className="text-[13px]">{m.parentName}</span><span className="flex items-center gap-1.5 text-[13px] text-muted num"><Phone size={12} />{phoneFmt(m.parentPhone)}<button onClick={() => copy(phoneFmt(m.parentPhone))} className="p-1 rounded hover:bg-sunken text-faint hover:text-ink" aria-label="번호 복사"><Copy size={12} /></button></span></td>
+                <td className="px-2 py-2.5"><span className="text-[13px]">{m.parentName}</span><span className="flex items-center gap-1.5 text-[13px] text-muted num"><Phone size={12} />{ph(m, phoneFmt)}<button onClick={() => copy(ph(m, phoneFmt))} className="p-1 rounded hover:bg-sunken text-faint hover:text-ink" aria-label="번호 복사"><Copy size={12} /></button></span></td>
                 <td className="px-2 py-2.5 num font-mono text-[12px] text-muted">{'a' in st && st.a?.checkIn ? `${st.a.checkIn}${st.a.checkOut ? ` → ${st.a.checkOut}` : ''}` : '-'}</td>
                 <td className="px-2 py-2.5"><span className="flex gap-1">{past.map(d => { const p = stateOf(m.id, d); return <span key={d} title={`${fmtShort(d)} ${p.label}`} className="w-3.5 h-3.5 rounded" style={{ background: p.color }} /> })}</span></td>
                 <td className="px-2 py-2.5 text-right">
-                  {date === today && st.label === '미확인' ? (
+                  {date === today && st.label === '미확인' && canMark ? (
                     <span className="inline-flex gap-1">
                       <Button size="sm" variant="outline" onClick={() => mark(m.id, k.id, 'late', '수동 출석')}>지각 출석</Button>
                       <Button size="sm" variant="danger" icon={<UserX size={13} />} onClick={() => { mark(m.id, k.id, 'absent'); toast({ title: `${m.name} 결석 처리`, body: `${weekLabel(db, date)} 결석 · 보강 대기에 추가했어요`, tone: 'warn' }) }}>결석</Button>

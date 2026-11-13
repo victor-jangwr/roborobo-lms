@@ -112,10 +112,10 @@ export function myStudents(db: DB & { clock: { date: string } }, teacherId?: str
   return db.students.filter(s => ids.has(s.id) && s.status !== 'left')
 }
 /** 이 사람이 볼 수 있는 상담 기록: '원장만 보기'는 원장과 작성자만 */
-export function visibleConsults(db: DB & { clock: { date: string } }, viewer: { role: string; teacherId?: string }, studentId?: string) {
-  const mine = viewer.role === 'teacher' ? new Set(myStudents(db, viewer.teacherId).map(s => s.id)) : null
+export function visibleConsults(db: DB & { clock: { date: string } }, viewer: { role: string; teacherId?: string; all?: boolean; private?: boolean }, studentId?: string) {
+  const mine = viewer.role === 'teacher' && !viewer.all ? new Set(myStudents(db, viewer.teacherId).map(s => s.id)) : null
   return db.consults.filter(c => (!studentId || c.studentId === studentId) && (!mine || mine.has(c.studentId))
-    && (!c.ownerOnly || viewer.role !== 'teacher' || c.teacherId === viewer.teacherId))
+    && (!c.ownerOnly || viewer.role !== 'teacher' || viewer.private || c.teacherId === viewer.teacherId))
     .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
 }
 /** 전화번호로 학부모·학생 찾기 (수신 화면 표시용) */

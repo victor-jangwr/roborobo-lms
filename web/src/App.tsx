@@ -9,6 +9,7 @@ function GlobalStudent() {
 }
 import { Shell, canSee, type Route } from './components/Shell'
 import Franchise from './pages/Franchise'
+import { canDo } from './lib/perms'
 import { Toasts } from './components/ui'
 import { useStore } from './lib/store'
 import { isCloud } from './lib/cloud'
@@ -50,7 +51,7 @@ export default function App() {
 
   if (!session) return <>{isCloud ? <CloudGate /> : <Login />}<Toasts /></>
   if (session.role === 'kiosk' || route === 'kiosk') return <><Kiosk onExit={session.role === 'kiosk' ? undefined : () => go('dashboard')} /><Toasts /></>
-  const allowed = canSee(route, session.role, !!useStore.getState().cloudMe?.hq_org_id) ? route : 'dashboard'
+  const allowed = canSee(route, session.role, !!useStore.getState().cloudMe?.hq_org_id, p => canDo(useStore.getState(), p)) ? route : 'dashboard'
   const Page = { franchise: Franchise, dashboard: Dashboard, chat: Chat, consult: Consult, classes: Classes, students: Students, timetable: Timetable, schedule: Schedule, billing: Billing, stats: Stats, config: Config, kiosk: Dashboard }[allowed]
   return <><Shell route={allowed} go={go}><Page go={go} /></Shell><GlobalStudent /><Toasts /></>
 }

@@ -8,9 +8,11 @@ import { saveFile, workbook } from '../lib/excel'
 import { useStore } from '../lib/store'
 import type { ClassSlot, Klass, Product } from '../lib/types'
 import { StudentPicker } from '../components/StudentPicker'
+import { useCan } from '../lib/perms'
 import { BillingToggle } from './Billing'
 import { WEEKDAYS, WORK_DAYS, addDays, cls, fmtDate, fmtMonth, phoneFmt, termFor, termWeeks, toMin, won } from '../lib/util'
 import { classItems, itemTotal } from '../lib/seed'
+import { usePhone } from '../lib/perms'
 
 const TERM_STATUS = { running: ['운영 중', 'good'], ready: ['준비 중', 'accent'], closed: ['종료 · 읽기 전용', 'neutral'] } as const
 
@@ -21,7 +23,10 @@ export default function Classes(_: { go: (r: Route) => void }) {
   const session = db.session!
   const isTeacher = session.role === 'teacher'
   const term = db.terms.find(t => t.id === db.activeTermId) ?? db.terms[0]
-  const locked = term.status === 'closed' || isTeacher
+  const can = useCan()
+  const closed = term.status === 'closed'
+  const locked = closed || !can('classes.edit')          // 반 만들기·수정
+  const enrollLocked = closed || !can('classes.enroll')  // 학생 배정·빼기
   const [day, setDay] = useState<string>('all')
   const [q, setQ] = useState('')
   const [edit, setEdit] = useState<Partial<Klass> | null>(null)
@@ -32,7 +37,7 @@ export default function Classes(_: { go: (r: Route) => void }) {
   const [sel, setSel] = useState<string[]>([])
   const [delOpen, setDelOpen] = useState(false)
 
-  const list = db.classes.filter(c => c.termId === term.id && (!isTeacher || c.teacherId === session.teacherId) && (!q || c.name.includes(q) || db.teachers.find(t => t.id === c.teacherId)?.name.includes(q)))
+  const list = db.classes.filter(c => c.termId === term.id && (!isTeacher || can('classes.all') || c.teacherId === session.teacherId) && (!q || c.name.includes(q) || db.teachers.find(t => t.id === c.teacherId)?.name.includes(q)))
   const count = (k: Klass) => db.enrollments.filter(e => e.classId === k.id && !e.end).length
   const days = day === 'all' ? WORK_DAYS : [Number(day)]
   const weeks = termWeeks(term).filter(w => w.no).length
@@ -113,7 +118,7 @@ export default function Classes(_: { go: (r: Route) => void }) {
       </div>
 
       <ClassForm draft={edit} termId={term.id} onClose={() => setEdit(null)} />
-      <ClassDrawer id={openId} locked={locked} onClose={() => setOpenId(null)} onEdit={(k) => { setOpenId(null); setEdit(k) }} />
+      <ClassDrawer id={openId} locked={locked} enrollLocked={enrollLocked} onClose={() => setOpenId(null)} onEdit={(k) => { setOpenId(null); setEdit(k) }} />
       <NewTermModal open={newTerm} onClose={() => setNewTerm(false)} />
       <DeleteClasses ids={delOpen ? picked : []} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); setSel([]); setPicking(false) }} />
     </div>
@@ -259,7 +264,8 @@ function ClassForm({ draft, termId, onClose }: { draft: Partial<Klass> | null; t
   )
 }
 
-function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locked: boolean; onClose: () => void; onEdit: (k: Klass) => void }) {
+function ClassDrawer({ id, locked, enrollLocked, onClose, onEdit }: { id: string | null; locked: boolean; enrollLocked: boolean; onClose: () => void; onEdit: (k: Klass) => void }) {
+  const ph = usePhone()
   const db = useStore(s => s)
   const enrollMany = useStore(s => s.enrollMany), unenroll = useStore(s => s.unenroll), del = useStore(s => s.deleteClass), toast = useStore(s => s.toast), openStudent = useStore(s => s.openStudent)
   const [confirmDel, setConfirmDel] = useState(false), [picking, setPicking] = useState(false)
@@ -296,7 +302,7 @@ function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locke
       </>}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold">수강생 <span className="num text-muted">{members.length}/{k.capacity}</span> <span className="text-[12px] text-faint font-normal">이름을 누르면 학생 정보</span></h3>
-        {!locked && <Button size="sm" variant="primary" icon={<UserPlus size={14} />} onClick={() => setPicking(true)}>학생 배정</Button>}
+        {!enrollLocked && <Button size="sm" variant="primary" icon={<UserPlus size={14} />} onClick={() => setPicking(true)}>학생 배정</Button>}
       </div>
       <ul className="flex flex-col gap-1.5 mb-6">
         <AnimatePresence initial={false}>
@@ -304,15 +310,15 @@ function ClassDrawer({ id, locked, onClose, onEdit }: { id: string | null; locke
             <motion.li key={s.id} layout initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10, height: 0 }} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-sunken/60 hover:bg-sunken transition-colors">
               <button onClick={() => openStudent(s.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left group">
                 <Avatar name={s.name} color={t?.color} size={30} />
-                <div className="flex-1 min-w-0"><p className="font-medium group-hover:text-accent">{s.name} <span className="text-[12px] text-faint font-normal">{s.grade} · {s.school}</span></p><p className="text-[12px] text-muted">{s.parentName} <span className="num">{phoneFmt(s.parentPhone)}</span> · 출결번호 <span className="num font-mono">{s.code}</span></p></div>
+                <div className="flex-1 min-w-0"><p className="font-medium group-hover:text-accent">{s.name} <span className="text-[12px] text-faint font-normal">{s.grade} · {s.school}</span></p><p className="text-[12px] text-muted">{s.parentName} <span className="num">{ph(s, phoneFmt)}</span> · 출결번호 <span className="num font-mono">{s.code}</span></p></div>
               </button>
-              {!locked && <button onClick={() => remove(s.id, s.name)} className="text-[12px] text-muted hover:text-bad px-2 py-1 rounded">빼기</button>}
+              {!enrollLocked && <button onClick={() => remove(s.id, s.name)} className="text-[12px] text-muted hover:text-bad px-2 py-1 rounded">빼기</button>}
             </motion.li>
           ))}
         </AnimatePresence>
-        {members.length === 0 && <li className="text-[13px] text-muted py-6 text-center rounded-lg border border-dashed border-line">아직 배정된 학생이 없어요.{!locked && <> <button className="text-accent font-medium" onClick={() => setPicking(true)}>학생 배정</button>으로 여러 명을 한 번에 넣을 수 있어요.</>}</li>}
+        {members.length === 0 && <li className="text-[13px] text-muted py-6 text-center rounded-lg border border-dashed border-line">아직 배정된 학생이 없어요.{!enrollLocked && <> <button className="text-accent font-medium" onClick={() => setPicking(true)}>학생 배정</button>으로 여러 명을 한 번에 넣을 수 있어요.</>}</li>}
       </ul>
-      {!locked && (
+      {!enrollLocked && (
         <StudentPicker open={picking} onClose={() => setPicking(false)} width={680}
           title={`「${k.name}」에 학생 배정`}
           sub={auto ? `고른 학생 모두 ${fmtMonth(billMonth)} 수강료${k.materialIds?.length ? '와 교재·교구비' : ''}가 바로 청구돼요. 학생별 할인은 자동 적용.` : '자동 청구가 꺼져 있거나 수강료가 없어 배정만 해요.'}

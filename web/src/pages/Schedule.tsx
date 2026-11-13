@@ -7,13 +7,16 @@ import type { Route } from '../components/Shell'
 import { Button, Card, CardHead, Empty, Field, Input, Modal, PageHead, Pill, Tabs, TeacherDot, ease } from '../components/ui'
 import { waitingMakeups, weekLabel } from '../lib/derive'
 import { useStore } from '../lib/store'
+import { useCan } from '../lib/perms'
 import type { Makeup, Term, Vacation } from '../lib/types'
 import { WEEKDAYS, addDays, cls, daysBetween, fmtDate, fmtShort, mondayOf, parseYmd, termWeeks, toMin, uid, weekOf, ymd } from '../lib/util'
 
 export default function Schedule(_: { go: (r: Route) => void }) {
   const db = useStore(s => s)
   const session = db.session!
-  const tId = session.role === 'teacher' ? session.teacherId : undefined
+  const can = useCan()
+  const tId = session.role === 'teacher' && !can('makeup.all') ? session.teacherId : undefined
+  const canMakeup = can('makeup.all') || can('makeup.mine')
   const [view, setView] = useState<'week' | 'month'>('week')
   const [anchor, setAnchor] = useState(db.clock.date)
   const [assignId, setAssignId] = useState<string | null>(null)
@@ -32,7 +35,7 @@ export default function Schedule(_: { go: (r: Route) => void }) {
   return (
     <div>
       <PageHead title="일정 · 보강" sub="보강은 강사별 색으로, 끝난 보강은 회색으로 표시됩니다. 결석 기록에는 몇 주차 수업을 빠졌는지 함께 나와요."
-        right={!tId && <Button icon={<Settings2 size={15} />} onClick={() => setTermEdit(true)}>분기 · 방학 설정</Button>} />
+        right={session.role !== 'teacher' && <Button icon={<Settings2 size={15} />} onClick={() => setTermEdit(true)}>분기 · 방학 설정</Button>} />
 
       <TermStrip term={term} date={db.clock.date} anchor={anchor} onPick={setAnchor} />
 
@@ -74,7 +77,7 @@ export default function Schedule(_: { go: (r: Route) => void }) {
                         <p className="text-[11px] text-muted num">{fmtShort(m.absentDate)}</p>
                       </div>
                       <div className="flex-1 min-w-0"><p className="font-semibold text-[14px]">{s.name}</p><p className="text-[12px] text-muted truncate">{k.name} · {daysBetween(m.absentDate, db.clock.date)}일째 대기</p></div>
-                      <Button size="sm" variant="soft" onClick={() => setAssignId(m.id)}>일정 잡기</Button>
+                      {canMakeup && <Button size="sm" variant="soft" onClick={() => setAssignId(m.id)}>일정 잡기</Button>}
                     </motion.li>
                   )
                 })}

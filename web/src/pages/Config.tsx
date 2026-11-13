@@ -7,17 +7,19 @@ import { useStore } from '../lib/store'
 import type { Teacher } from '../lib/types'
 import { TEACHER_COLORS, cls, phoneFmt } from '../lib/util'
 import { isCloud } from '../lib/cloud'
+import { Permissions } from './ConfigPerms'
 import { Accounts, CallSetup, OrgSetup, PaySetup, SmsServer } from './ConfigCloud'
 
 export default function Config(_: { go: (r: Route) => void }) {
-  const [tab, setTab] = useState<'teachers' | 'attendance' | 'branch' | 'demo' | 'accounts' | 'phone' | 'pay' | 'call'>('teachers')
+  const [tab, setTab] = useState<'teachers' | 'attendance' | 'branch' | 'demo' | 'accounts' | 'phone' | 'pay' | 'call' | 'perms'>('teachers')
   return (
     <div>
       <PageHead title="설정" />
       <Tabs value={tab} onChange={setTab} className="mb-5" items={isCloud
-        ? [{ value: 'teachers', label: '강사' }, { value: 'accounts', label: '계정' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'phone', label: '휴대폰 발송' }, { value: 'pay', label: '온라인 결제' }, { value: 'call', label: '상담 녹음' }, { value: 'branch', label: '지점 · 가맹' }]
-        : [{ value: 'teachers', label: '강사' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'branch', label: '지점 · 가맹' }, { value: 'demo', label: '미리보기 데이터' }]} />
+        ? [{ value: 'teachers', label: '강사' }, { value: 'perms', label: '권한' }, { value: 'accounts', label: '계정' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'phone', label: '휴대폰 발송' }, { value: 'pay', label: '온라인 결제' }, { value: 'call', label: '상담 녹음' }, { value: 'branch', label: '지점 · 가맹' }]
+        : [{ value: 'teachers', label: '강사' }, { value: 'perms', label: '권한' }, { value: 'attendance', label: '출결 · 문자' }, { value: 'branch', label: '지점 · 가맹' }, { value: 'demo', label: '미리보기 데이터' }]} />
       {tab === 'teachers' && <Teachers />}
+      {tab === 'perms' && <Permissions />}
       {tab === 'attendance' && <Attendance />}
       {tab === 'branch' && <Branch />}
       {tab === 'demo' && <Demo />}

@@ -6,6 +6,7 @@ import { Avatar, Button, Card, Field, Input, Modal, ease } from '../components/u
 import { splitRefs } from '../lib/chatSeed'
 import { myChannels, studentClasses, unreadOf } from '../lib/derive'
 import { useStore } from '../lib/store'
+import { useCan } from '../lib/perms'
 import type { Channel, Member, Message } from '../lib/types'
 import { cls, fmtDate } from '../lib/util'
 
@@ -88,7 +89,8 @@ function Thread({ id, onBack }: { id: string; onBack: () => void }) {
   const firstUnread = useRef(db.reads[me]?.[id] ?? '')
   useEffect(() => { markRead(id) }, [id, msgs.length, markRead])
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [msgs.length])
-  const canWrite = c.kind !== 'notice' || me === 'owner'
+  const can = useCan()
+  const canWrite = c.kind !== 'notice' || me === 'owner' || can('notice')
   const members = c.members === 'all' ? (['owner', ...db.teachers.filter(t => t.active).map(t => t.id)] as Member[]) : c.members
   let lastDay = ''
 

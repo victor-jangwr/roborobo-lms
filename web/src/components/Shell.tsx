@@ -7,6 +7,7 @@ import { useStore } from '../lib/store'
 import { cls, fmtDate } from '../lib/util'
 import { totalUnread, weekLabel } from '../lib/derive'
 import { BrandMark } from './Art'
+import { useCan, type Perm } from '../lib/perms'
 import { isCloud } from '../lib/cloud'
 import { onSyncStatus, type SyncStatus } from '../lib/sync'
 import { useEffect } from 'react'
@@ -30,19 +31,26 @@ export const NAV: { route: Route; label: string; icon: typeof Users; roles: stri
 ]
 
 /** 본사 관리자 계정이면 원장이어도 '가맹 본사' 메뉴를 봄 */
-export function canSee(route: Route, role: string, hq: boolean) {
+export function canSee(route: Route, role: string, hq: boolean, can: (p: Perm) => boolean = () => true) {
   const n = NAV.find(x => x.route === route)
   if (!n) return false
+  if (role === 'teacher') {
+    // 선생님은 권한에 따라 메뉴가 열리고 닫힘
+    if (route === 'students') return can('students.view')
+    if (route === 'stats') return can('stats')
+    if (route === 'consult') return can('consult.mine') || can('consult.all')
+  }
   return n.roles.includes(role) || (route === 'franchise' && hq)
 }
 
 function NavList({ route, go, onPick }: { route: Route; go: (r: Route) => void; onPick?: () => void }) {
   const role = useStore(s => s.session?.role ?? 'owner')
   const hq = useStore(s => !!s.cloudMe?.hq_org_id)
+  const can = useCan()
   const unread = useStore(s => totalUnread(s, s.me()))
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.filter(n => canSee(n.route, role, hq)).map(n => {
+      {NAV.filter(n => canSee(n.route, role, hq, can)).map(n => {
         const on = route === n.route
         return (
           <button key={n.route} onClick={() => { go(n.route); onPick?.() }}

@@ -8,6 +8,8 @@ export interface Teacher {
   id: ID; branchId: ID; name: string; phone: string
   color: string        // 일정·시간표에 쓰는 강사 색상
   active: boolean
+  permRole?: 'teacher' | 'lead' | 'staff'      // 권한 역할 (자동)
+  permOverrides?: Record<string, boolean>      // 개별 조정 (수동): true 켬 / false 끔
 }
 
 export type TermStatus = 'ready' | 'running' | 'closed'
@@ -129,6 +131,8 @@ export interface Settings {
   payRemindLast?: string        // 마지막 자동 재알림 날짜
   callUploadMode?: 'off' | 'test' | 'all'   // 상담 통화 녹음 올리기: 끄기 / 테스트 번호만 / 전체 학부모
   callTestNumbers?: string[]    // 테스트 모드에서 올릴 번호
+  permPresets?: Record<string, string[]>   // 역할별 권한 묶음
+  permClassRule?: boolean       // 담당 반이 있으면 출결·상담·연락처·보강 권한 자동
 }
 
 export type Role = 'hq' | 'owner' | 'teacher' | 'kiosk'
