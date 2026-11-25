@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { pingConfirm } from '../lib/payments'
 import confirmCode from '../../../supabase/functions/lms-pay-confirm/index.ts?raw'
 import callCode from '../../../supabase/functions/lms-call-summarize/index.ts?raw'
+const CALL_FN_VERSION = Number(/const VERSION = (\d+)/.exec(callCode)?.[1] ?? 1)
 import { Button, Card, CardHead, Field, Input, Modal, Pill, Select } from '../components/ui'
 import { cloud, errText } from '../lib/cloud'
 import { useStore } from '../lib/store'
@@ -239,9 +240,21 @@ export function CallSetup() {
   const mode = settings.callUploadMode ?? 'off'
   const nums = settings.callTestNumbers ?? []
   const [num, setNum] = useState('')
-  const [ping, setPing] = useState<{ ok: boolean; key?: boolean; model?: string; message?: string } | null>(null)
+  const [ping, setPing] = useState<{ ok: boolean; key?: boolean; model?: string; message?: string; version?: number } | null>(null)
   const [checking, setChecking] = useState(false)
   const [confirmAll, setConfirmAll] = useState(false)
+  const [test, setTest] = useState<{ ok: boolean; model?: string; ms?: number; message?: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  const outdated = !!ping?.ok && (ping.version ?? 1) < CALL_FN_VERSION
+  const runTest = async () => {
+    setTesting(true); setTest(null)
+    try {
+      const { data, error } = await cloud!.functions.invoke('lms-call-summarize', { body: { test: true } })
+      if (error) { let msg = error.message; try { const b = await (error as { context?: Response }).context?.json(); if (b?.message) msg = b.message } catch { /* 본문 없음 */ } setTest({ ok: false, message: msg }) }
+      else setTest(data?.version ? data : { ok: false, message: '정리 서버 코드가 예전 버전이에요. 위 1단계의 코드 복사로 다시 배포해 주세요.' })
+    } catch (e) { setTest({ ok: false, message: (e as Error).message }) }
+    setTesting(false)
+  }
   const check = async () => {
     setChecking(true)
     try { const { data, error } = await cloud!.functions.invoke('lms-call-summarize', { body: { ping: true } }); setPing(error ? { ok: false, message: error.message } : data) } catch (e) { setPing({ ok: false, message: (e as Error).message }) }
@@ -303,6 +316,17 @@ export function CallSetup() {
           <span className={cls('w-2.5 h-2.5 rounded-full', ping?.ok && ping.key ? 'bg-good' : ping?.ok ? 'bg-warn' : 'bg-bad')} />
           <p className="flex-1 text-[13px]">{checking ? '정리 서버 확인 중…' : ping?.ok ? (ping.key ? `정리 서버 연결됨 · ${ping.model}` : '정리 서버는 있지만 Gemini 키가 없어요 (2단계)') : `정리 서버에 연결되지 않아요 (1단계)${ping?.message ? ` · ${ping.message}` : ''}`}</p>
           <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} onClick={check}>다시 확인</Button>
+        </div>
+        {outdated && <p className="mt-2 text-[13px] text-warn">정리 서버 코드가 예전 버전이에요. 1단계의 <b>코드 복사</b>로 새 코드를 붙여 넣고 다시 Deploy 해 주세요.</p>}
+        <div className="mt-3 p-3 rounded-lg border border-line">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <p className="font-semibold text-[14px]">Gemini 시험하기</p>
+              <p className="text-[12px] text-muted">통화 없이 1초짜리 무음 녹음으로 실제와 똑같이 Gemini 를 불러 봐요. 실패하면 이유와 할 일을 알려 드려요.</p>
+            </div>
+            <Button size="sm" disabled={!ping?.ok || !ping.key || testing} onClick={runTest}>{testing ? '시험하는 중…' : '시험하기'}</Button>
+          </div>
+          {test && <p className={cls('mt-2 text-[13px] rounded-md px-3 py-2', test.ok ? 'bg-good/10 text-good' : 'bg-bad/10 text-bad')} data-gemini-test>{test.ok ? `정상이에요 · ${test.model} · ${((test.ms ?? 0) / 1000).toFixed(1)}초` : test.message}</p>}
         </div>
       </Card>
       <Card>

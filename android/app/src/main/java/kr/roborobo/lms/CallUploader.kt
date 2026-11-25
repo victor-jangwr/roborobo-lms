@@ -20,7 +20,7 @@ import java.util.TimeZone
  * - 서버가 Gemini 로 정리하면 상담 '검토 대기'에 들어가고, 서버의 녹음 파일은 바로 지워집니다
  */
 object CallUploader {
-    private const val MAX_BYTES = 19 * 1024 * 1024
+    private const val MAX_BYTES = 45 * 1024 * 1024
     private var policy: JSONObject? = null
     private var policyAt = 0L
 
@@ -48,6 +48,7 @@ object CallUploader {
         if (ctx.checkSelfPermission(mediaPerm) != PackageManager.PERMISSION_GRANTED) return
         if (ctx.checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) return
         val p = prefs(ctx)
+        if (System.currentTimeMillis() < p.getLong("retryAt", 0L)) return   // 실패한 녹음은 조금 기다렸다 다시
         var since = p.getLong("since", 0L)
         if (since == 0L) { resetBaseline(ctx); return }
         val nowSec = System.currentTimeMillis() / 1000
@@ -77,11 +78,15 @@ object CallUploader {
                     false
                 }
                 val tries = p.getInt("tries", 0)
-                if (done || tries >= 2) {
-                    since = added; p.edit().putLong("since", since).putInt("tries", 0).apply()
+                if (done || tries >= 6) {
+                    if (!done) AppLog.add(ctx, "녹음 정리를 여러 번 실패해서 건너뛰었어요 ($name)")
+                    since = added; p.edit().putLong("since", since).putInt("tries", 0).putLong("retryAt", 0L).apply()
                 } else {
-                    p.edit().putInt("tries", tries + 1).apply()
-                    return   // 다음 확인 때 다시 시도
+                    // Gemini 가 바쁠 때가 많아 2분, 4분, 6분… 간격으로 다시 시도 (약 40분 동안)
+                    val wait = 120_000L * (tries + 1)
+                    AppLog.add(ctx, "${wait / 60000}분 뒤 다시 정리해요 (${tries + 1}/6)")
+                    p.edit().putInt("tries", tries + 1).putLong("retryAt", System.currentTimeMillis() + wait).apply()
+                    return
                 }
             }
         }
@@ -119,7 +124,7 @@ object CallUploader {
         }
         // 3) 학부모 번호인지
         if (api.lookupCaller(phone).length() == 0) { AppLog.add(ctx, "녹음 건너뜀: 학부모 번호가 아니에요 ($masked)"); return true }
-        if (size > MAX_BYTES) { AppLog.add(ctx, "녹음 건너뜀: 통화가 너무 길어요 (약 30분 이하만)"); return true }
+        if (size > MAX_BYTES) { AppLog.add(ctx, "녹음 건너뜀: 통화가 너무 길어요 (약 1시간 이하만)"); return true }
 
         // 4) 올리고 정리 요청
         val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false

@@ -43,6 +43,7 @@ class SmsService : Service() {
     private val pending = ConcurrentHashMap<String, Pending>()
     private val stopFlag = AtomicBoolean(false)
     private var worker: Thread? = null
+    private val callBusy = java.util.concurrent.atomic.AtomicBoolean(false)
     private var wake: PowerManager.WakeLock? = null
 
     private val sentReceiver = object : BroadcastReceiver() {
@@ -133,7 +134,10 @@ class SmsService : Service() {
                 }
                 // 통화 녹음은 20초마다 확인
                 if (api.callUpload && tick % 4 == 0) {
-                    try { CallUploader.check(this, api) } catch (e: Exception) { AppLog.add(this, "녹음 확인 실패: ${e.message}") }
+                    // 정리에 1~2분 걸릴 수 있어 따로 돌림 (그동안에도 문자는 계속 발송)
+                    if (callBusy.compareAndSet(false, true)) Thread({
+                        try { CallUploader.check(this, api) } catch (e: Exception) { AppLog.add(this, "녹음 확인 실패: ${e.message}") } finally { callBusy.set(false) }
+                    }, "call-upload").start()
                 }
                 tick++
                 update(listOfNotNull(if (api.enabled) "문자 발송 대기 중 · ${sentToday.get()}건 발송" else null, if (api.callUpload) "통화 녹음 정리 켜짐" else null).joinToString(" · "))

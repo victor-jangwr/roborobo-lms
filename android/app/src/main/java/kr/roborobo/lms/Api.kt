@@ -48,11 +48,11 @@ class Api(context: Context) {
 
     class HttpError(val code: Int, message: String) : IOException(message)
 
-    private fun http(method: String, path: String, body: String?, auth: Boolean): String {
+    private fun http(method: String, path: String, body: String?, auth: Boolean, readMs: Int = 20000): String {
         val c = URL(url + path).openConnection() as HttpURLConnection
         c.requestMethod = method
         c.connectTimeout = 15000
-        c.readTimeout = 20000
+        c.readTimeout = readMs
         c.setRequestProperty("apikey", key)
         c.setRequestProperty("Content-Type", "application/json")
         c.setRequestProperty("Authorization", "Bearer " + if (auth) access else key)
@@ -143,15 +143,17 @@ class Api(context: Context) {
         val code = c.responseCode
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
         c.disconnect()
-        if (code !in 200..299) throw HttpError(code, readableError(text, code))
+        // 지난번 정리가 실패해 같은 파일이 이미 서버에 있으면 그대로 다시 정리
+        if (code !in 200..299 && !(code == 409 || text.contains("already exists") || text.contains("Duplicate"))) throw HttpError(code, readableError(text, code))
     }
 
     /** Edge Function 호출 (원장 로그인 토큰으로) */
     fun function(name: String, body: JSONObject): JSONObject {
         ensureToken()
-        val text = try { http("POST", "/functions/v1/$name", body.toString(), true) } catch (e: HttpError) {
-            if (e.code != 401) throw e
-            expiresAt = 0; ensureToken(); http("POST", "/functions/v1/$name", body.toString(), true)
+        // 녹음 정리는 Gemini 가 듣고 적느라 1~2분 걸릴 수 있어서 넉넉히 기다림
+        val text = try { http("POST", "/functions/v1/$name", body.toString(), true, 150000) } catch (e: HttpError) {
+            if (e.code == 401) { expiresAt = 0; ensureToken(); http("POST", "/functions/v1/$name", body.toString(), true, 150000) }
+            else return try { JSONObject(e.message ?: "") } catch (_: Exception) { JSONObject().put("ok", false).put("message", e.message ?: "서버 오류 ${e.code}") }
         }
         return try { JSONObject(text) } catch (e: Exception) { JSONObject().put("ok", false).put("message", text.take(200)) }
     }
